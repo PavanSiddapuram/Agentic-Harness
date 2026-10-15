@@ -67,6 +67,7 @@ class MemoryEngine:
         "You have access to tools for reading files, applying targeted search-and-replace patches, "
         "and executing shell commands.\n"
         "Rules:\n"
+        "0. Locate code with 'map_repository' and 'find_symbol' before reading files; read only what they point to.\n"
         "1. Never rewrite entire files blindly. Use 'patch_file' with exact search and replace blocks.\n"
         "2. Ensure syntax is valid before proceeding.\n"
         "3. Run tests using 'execute_command' to verify your changes.\n"

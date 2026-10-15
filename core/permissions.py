@@ -12,6 +12,10 @@ from typing import Callable, List, Optional
 from core.models import PermissionLevel, ToolCallRequest
 
 
+# Tools that only read the workspace; they run without a prompt.
+READ_ONLY_TOOLS = {"read_file", "search_directory", "list_dir", "map_repository", "find_symbol"}
+
+
 class SecurityException(Exception):
     """Raised when a forbidden or catastrophic operation is requested."""
     pass
@@ -51,7 +55,7 @@ class PermissionGate:
 
     def assess(self, call: ToolCallRequest) -> PermissionLevel:
         """Determines the risk classification tier for a proposed tool call."""
-        if call.tool_name in ["read_file", "search_directory", "list_dir"]:
+        if call.tool_name in READ_ONLY_TOOLS:
             return PermissionLevel.AUTO_ALLOW
 
         if call.tool_name in ["patch_file", "create_file"]:

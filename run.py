@@ -29,6 +29,8 @@ from core.tools.fs_tools import (
 )
 from core.tools.patcher import PatchFileTool
 from core.tools.shell import ExecuteCommandTool
+from planes.context.index import RepoIndex
+from planes.context.tools import FindSymbolTool, MapRepositoryTool
 
 
 def print_banner():
@@ -74,6 +76,9 @@ def setup_harness(
     tools.register(ListDirTool(resolver))
     tools.register(SearchDirectoryTool(resolver))
     tools.register(PatchFileTool(resolver))
+    repo_index = RepoIndex(workspace)
+    tools.register(MapRepositoryTool(repo_index))
+    tools.register(FindSymbolTool(repo_index))
     tools.register(
         ExecuteCommandTool(resolver, raw_log_dir=os.path.join(workspace, ".harness", "raw"))
     )
