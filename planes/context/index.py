@@ -46,6 +46,10 @@ LANG_PATTERNS: Dict[Tuple[str, ...], List[Tuple[re.Pattern, str]]] = {
         (re.compile(rf"^\s*(export\s+)?(declare\s+)?(interface|type|enum)\s+{_N}"), "type"),
         (re.compile(rf"^(export\s+)?(const|let)\s+{_N}\s*(:[^=]+)?=\s*(async\s*)?(\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>"), "function"),
         (re.compile(rf"^export\s+(const|let|var)\s+{_N}"), "const"),
+        # CommonJS / prototype style: res.send = function send(...), exports.x = (...) =>
+        (re.compile(r"^(?P<name>[A-Za-z_$][\w$]*(\.[\w$]+)+)\s*=\s*(async\s+)?(function\b|\([^)]*\)\s*=>|[A-Za-z_$][\w$]*\s*=>)"), "method"),
+        # Indented class or object methods: `  async add(item) {`
+        (re.compile(r"^\s+(?!(if|for|while|switch|catch|function|return|else)\b)(static\s+)?(async\s+)?(get\s+|set\s+)?\*?(?P<name>[A-Za-z_$][\w$]*)\s*\((?![^)]*\bfunction\b)[^)]*\)\s*(:\s*[^={]+)?\{\s*$"), "method"),
     ],
     (".go",): [
         (re.compile(rf"^func\s+(\([^)]*\)\s*)?{_N}"), "function"),

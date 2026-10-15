@@ -75,6 +75,24 @@ class TestSymbolExtraction(unittest.TestCase):
             {"CartItem", "Cart", "totalPrice", "checkout"} <= self.names("a.ts", FILES["web/src/cart.ts"])
         )
 
+    def test_commonjs_and_class_methods(self):
+        source = (
+            "res.send = function send(body) {\n"
+            "exports.compile = (src) => src;\n"
+            "module.exports.render = async function () {\n"
+            "class Store {\n"
+            "  async load(id: string): Promise<void> {\n"
+            "  static create() {\n"
+            "  if (ready) {\n"
+            "  describe('x', () => {\n"
+            "    setImmediate(function () {\n"
+        )
+        names = self.names("a.ts", source)
+        self.assertTrue({"res.send", "exports.compile", "module.exports.render", "Store", "load", "create"} <= names)
+        self.assertNotIn("if", names)
+        self.assertNotIn("describe", names)
+        self.assertNotIn("setImmediate", names)
+
     def test_go_rust_java_c(self):
         self.assertTrue({"Order", "Total", "main"} <= self.names("a.go", FILES["svc/main.go"]))
         self.assertTrue({"Engine", "start_engine", "tests"} <= self.names("a.rs", FILES["core/lib.rs"]))
