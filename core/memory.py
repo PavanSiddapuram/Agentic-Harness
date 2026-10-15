@@ -141,6 +141,11 @@ class MemoryEngine:
             # Always preserve the initial prompt (turn 0)
             initial_prompt = self.messages[0] if self.messages else None
             recent_turns = self.messages[-(self.max_sliding_turns - 1):]
+            # A 'tool' message must follow the assistant message that issued its
+            # tool_calls; providers reject an orphaned one. Drop leading tool
+            # results whose parent assistant turn fell outside the window.
+            while recent_turns and recent_turns[0].get("role") == "tool":
+                recent_turns = recent_turns[1:]
             if initial_prompt and initial_prompt not in recent_turns:
                 sliding_buffer = [initial_prompt] + recent_turns
             else:
