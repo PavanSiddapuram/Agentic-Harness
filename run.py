@@ -74,7 +74,9 @@ def setup_harness(
     tools.register(ListDirTool(resolver))
     tools.register(SearchDirectoryTool(resolver))
     tools.register(PatchFileTool(resolver))
-    tools.register(ExecuteCommandTool(resolver))
+    tools.register(
+        ExecuteCommandTool(resolver, raw_log_dir=os.path.join(workspace, ".harness", "raw"))
+    )
 
     permissions = PermissionGate(workspace, auto_approve_all=auto_approve)
     evaluator = Evaluator(resolver)
