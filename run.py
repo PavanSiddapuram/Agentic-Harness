@@ -15,7 +15,8 @@ from core.loop import HarnessLoop
 from core.memory import MemoryEngine
 from core.model_client import MockModelClient, RawOpenAIClient
 from core.models import ModelTurnResponse, ToolCallRequest
-from core.permissions import PermissionGate
+from core.permissions import GateConfigError, PermissionGate
+from core.project_context import build_project_instructions, hide_runtime_dir_from_git
 from core.state import StateStore
 from core.telemetry import TelemetryLogger
 from core.tools.base import ToolDispatcher
@@ -28,6 +29,8 @@ from core.tools.fs_tools import (
 )
 from core.tools.patcher import PatchFileTool
 from core.tools.shell import ExecuteCommandTool
+from planes.context.index import RepoIndex
+from planes.context.tools import FindSymbolTool, MapRepositoryTool
 
 
 def print_banner():
@@ -56,6 +59,7 @@ def setup_harness(
     """Configures and wires all subsystems together."""
     workspace = os.path.realpath(workspace_root)
     os.makedirs(os.path.join(workspace, ".harness"), exist_ok=True)
+    hide_runtime_dir_from_git(workspace)
 
     session_id = f"session_{uuid.uuid4().hex[:8]}"
     state_store = StateStore.create_new(
@@ -73,11 +77,16 @@ def setup_harness(
     tools.register(ListDirTool(resolver))
     tools.register(SearchDirectoryTool(resolver))
     tools.register(PatchFileTool(resolver))
-    tools.register(ExecuteCommandTool(resolver))
+    repo_index = RepoIndex(workspace)
+    tools.register(MapRepositoryTool(repo_index))
+    tools.register(FindSymbolTool(repo_index))
+    tools.register(
+        ExecuteCommandTool(resolver, raw_log_dir=os.path.join(workspace, ".harness", "raw"))
+    )
 
     permissions = PermissionGate(workspace, auto_approve_all=auto_approve)
     evaluator = Evaluator(resolver)
-    memory = MemoryEngine()
+    memory = MemoryEngine(project_instructions=build_project_instructions(workspace))
     telemetry = TelemetryLogger(os.path.join(workspace, ".harness", "events.jsonl"))
 
     if mock_mode:
@@ -151,15 +160,20 @@ def main():
     print(f"[INIT] Model Mode: {'MOCK SIMULATION' if args.mock else args.model}")
     print(f"[INIT] Hard Ceiling: max {args.max_turns} turns | budget ${args.max_spend:.2f}\n")
 
-    loop = setup_harness(
-        workspace_root=args.workspace,
-        max_turns=args.max_turns,
-        max_token_budget=args.token_budget,
-        max_spend_usd=args.max_spend,
-        auto_approve=args.auto_approve,
-        mock_mode=args.mock,
-        model_name=args.model,
-    )
+    try:
+        loop = setup_harness(
+            workspace_root=args.workspace,
+            max_turns=args.max_turns,
+            max_token_budget=args.token_budget,
+            max_spend_usd=args.max_spend,
+            auto_approve=args.auto_approve,
+            mock_mode=args.mock,
+            model_name=args.model,
+        )
+    except GateConfigError as e:
+        # Fail closed: never run with gates we could not read.
+        print(f"[REFUSED] {e}\nFix the file or remove it, then run again.")
+        sys.exit(2)
 
     final_state = loop.run(prompt)
 

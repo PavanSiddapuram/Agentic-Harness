@@ -22,8 +22,8 @@ The agent loop is the commoditized part. The value is the environment around it:
 | 3 Verification | Preview environment with real dependencies; scenario, trace and latency-budget checks against main | `planes/verify/` | Planned (P2) |
 | 4 Delivery | Affected-target CI, flaky-test quarantine, canary watch that proposes (never executes) rollback | `planes/delivery/` | Planned (P3) |
 | 5 Signals | Read-only telemetry queries over traces, logs, metrics and deploy markers; cluster errors and complaints into issues | `planes/signals/` | Planned (P3, P4) |
-| 6 Context | Token-budgeted context pack per task: precise symbols, ownership, recent history, hot runtime paths | `planes/context/` | Planned (P1) |
-| Governance | Tool risk classes, audit log, approval queue | `core/permissions.py`, later `governance/` | Partial |
+| 6 Context | Token-budgeted context pack per task: precise symbols, ownership, recent history, hot runtime paths | `planes/context/` | Started: `map_repository`, `find_symbol`, project `AGENTS.md` loading |
+| Governance | Tool risk classes, audit log, approval queue | `core/permissions.py`, later `governance/` | Partial: denylist, approval gate, `harness.gates.json` owner gates |
 
 Planes 1, 3, 5 and 6 are built as MCP servers so they also work from other agents (Claude Code, Codex), not only from `core/`.
 
