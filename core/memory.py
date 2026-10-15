@@ -78,8 +78,13 @@ class MemoryEngine:
         system_prompt: Optional[str] = None,
         max_sliding_turns: int = 8,
         spill_cache: Optional[SpillCache] = None,
+        project_instructions: str = "",
     ):
         self.system_prompt = system_prompt or self.DEFAULT_SYSTEM_PROMPT
+        # Project instructions join the stable system block (not the per-turn
+        # anchor) so the prefix stays identical across turns for prompt caching.
+        if project_instructions:
+            self.system_prompt = f"{self.system_prompt}\n\n{project_instructions}"
         self.max_sliding_turns = max_sliding_turns
         self.spill_cache = spill_cache or SpillCache()
         self.messages: List[Dict[str, Any]] = []

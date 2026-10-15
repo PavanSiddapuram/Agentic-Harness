@@ -16,6 +16,7 @@ from core.memory import MemoryEngine
 from core.model_client import MockModelClient, RawOpenAIClient
 from core.models import ModelTurnResponse, ToolCallRequest
 from core.permissions import PermissionGate
+from core.project_context import build_project_instructions
 from core.state import StateStore
 from core.telemetry import TelemetryLogger
 from core.tools.base import ToolDispatcher
@@ -77,7 +78,7 @@ def setup_harness(
 
     permissions = PermissionGate(workspace, auto_approve_all=auto_approve)
     evaluator = Evaluator(resolver)
-    memory = MemoryEngine()
+    memory = MemoryEngine(project_instructions=build_project_instructions(workspace))
     telemetry = TelemetryLogger(os.path.join(workspace, ".harness", "events.jsonl"))
 
     if mock_mode:
