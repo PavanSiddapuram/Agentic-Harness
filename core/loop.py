@@ -6,7 +6,7 @@ deterministic boundaries between stochastic LLM inferences and local OS interact
 
 from __future__ import annotations
 
-import sys
+import json
 from typing import Optional
 
 from core.evaluator import Evaluator
@@ -116,7 +116,8 @@ class HarnessLoop:
                 {
                     "id": tc.call_id,
                     "type": "function",
-                    "function": {"name": tc.tool_name, "arguments": tc.parameters},
+                    # OpenAI-compatible APIs require arguments as a JSON string.
+                    "function": {"name": tc.tool_name, "arguments": json.dumps(tc.parameters)},
                 }
                 for tc in response.tool_calls
             ]

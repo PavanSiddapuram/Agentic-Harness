@@ -29,8 +29,17 @@ class PermissionGate:
         self.workspace_root = workspace_root
         self.auto_approve_all = auto_approve_all
         self.input_func = input_func or input
+        # Defense in depth only: a regex denylist over a shell string can always be
+        # evaded (aliases, scripts, eval). The real boundary is human approval for
+        # RESTRICTED calls and, eventually, a sandbox. Keep this list tested.
         self.destructive_patterns: List[str] = [
-            r"rm\s+-rf",
+            # rm with both recursive and force flags, any order or form
+            r"\brm\s+(?=[^|;&]*(-[a-zA-Z]*r|--recursive))(?=[^|;&]*(-[a-zA-Z]*f|--force))",
+            r"\bfind\b[^|;&]*\s-delete\b",
+            r"\bgit\s+push\b[^|;&]*(--force\b|--force-with-lease\b|\s-f\b|--mirror\b)",
+            r"\bgit\s+reset\s+--hard\b",
+            r"\bgit\s+clean\s+-[a-zA-Z]*f",
+            r"\b(curl|wget)\b[^|;&]*\|\s*(sudo\s+)?(ba|z)?sh\b",  # pipe-to-shell
             r":\(\)\{\s*:\|\:&\s*\};:",  # Fork bomb
             r"mkfs",
             r"dd\s+if=",

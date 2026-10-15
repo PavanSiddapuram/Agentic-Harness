@@ -28,10 +28,12 @@ class Evaluator:
         """Inspects raw tool execution output and enriches it with compiler/syntax feedback."""
         # Check shell command exit codes
         if tool_call.tool_name == "execute_command":
-            if "Exit code: 0" not in raw_result.output:
+            # Trust the tool's own exit-code verdict; matching "Exit code: 0" in the
+            # text misfires when the command's output happens to contain it.
+            if not raw_result.success:
                 raw_result.success = False
                 raw_result.evaluator_feedback = (
-                    "Subprocess exited with a non-zero status code. "
+                    "Command failed with a non-zero status code or timed out. "
                     "Inspect the stderr/output above, diagnose the root cause, and correct the error."
                 )
                 return raw_result
