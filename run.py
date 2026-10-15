@@ -29,6 +29,7 @@ from core.tools.fs_tools import (
 )
 from core.tools.patcher import PatchFileTool
 from core.tools.shell import ExecuteCommandTool
+from planes.context.graph import graph_tools
 from planes.context.index import RepoIndex
 from planes.context.tools import FindSymbolTool, MapRepositoryTool
 
@@ -80,6 +81,9 @@ def setup_harness(
     repo_index = RepoIndex(workspace)
     tools.register(MapRepositoryTool(repo_index))
     tools.register(FindSymbolTool(repo_index))
+    # Optional: call-graph tools when codebase-memory-mcp is installed.
+    for tool in graph_tools(workspace):
+        tools.register(tool)
     tools.register(
         ExecuteCommandTool(resolver, raw_log_dir=os.path.join(workspace, ".harness", "raw"))
     )
