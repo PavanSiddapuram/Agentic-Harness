@@ -129,7 +129,7 @@ def main():
     parser.add_argument("--max-turns", type=int, default=25, help="Maximum execution turns")
     parser.add_argument("--token-budget", type=int, default=200_000, help="Maximum token budget")
     parser.add_argument("--max-spend", type=float, default=0.50, help="Maximum dollar spend ceiling")
-    parser.add_argument("--auto-approve", action="store_true", help="Auto-approve non-destructive file patches")
+    parser.add_argument("--auto-approve", action="store_true", help="Auto-approve file writes AND shell commands (only the denylist still applies)")
     parser.add_argument("--mock", action="store_true", help="Run with deterministic mock client")
     parser.add_argument("--model", default="gpt-4o-mini", help="Model name for OpenAI-compatible endpoint")
 
