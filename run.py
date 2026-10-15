@@ -16,7 +16,7 @@ from core.memory import MemoryEngine
 from core.model_client import MockModelClient, RawOpenAIClient
 from core.models import ModelTurnResponse, ToolCallRequest
 from core.permissions import GateConfigError, PermissionGate
-from core.project_context import build_project_instructions
+from core.project_context import build_project_instructions, hide_runtime_dir_from_git
 from core.state import StateStore
 from core.telemetry import TelemetryLogger
 from core.tools.base import ToolDispatcher
@@ -59,6 +59,7 @@ def setup_harness(
     """Configures and wires all subsystems together."""
     workspace = os.path.realpath(workspace_root)
     os.makedirs(os.path.join(workspace, ".harness"), exist_ok=True)
+    hide_runtime_dir_from_git(workspace)
 
     session_id = f"session_{uuid.uuid4().hex[:8]}"
     state_store = StateStore.create_new(

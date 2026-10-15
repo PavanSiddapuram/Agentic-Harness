@@ -6,7 +6,7 @@ import tempfile
 import unittest
 
 from core.memory import MemoryEngine, SpillCache
-from core.project_context import build_project_instructions
+from core.project_context import build_project_instructions, hide_runtime_dir_from_git
 
 
 class TestProjectContext(unittest.TestCase):
@@ -73,6 +73,29 @@ class TestProjectContext(unittest.TestCase):
         first = memory.compile_context()[0]
         self.assertEqual(first["role"], "system")
         self.assertIn("use tabs", first["content"])
+
+
+class TestHideRuntimeDir(unittest.TestCase):
+    def setUp(self):
+        self.ws = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.ws, ignore_errors=True)
+
+    def test_not_a_git_repo_is_left_alone(self):
+        self.assertFalse(hide_runtime_dir_from_git(self.ws))
+        self.assertFalse(os.path.exists(os.path.join(self.ws, ".git")))
+
+    def test_adds_once_and_keeps_existing_entries(self):
+        info = os.path.join(self.ws, ".git", "info")
+        os.makedirs(info)
+        with open(os.path.join(info, "exclude"), "w") as f:
+            f.write("*.local")  # no trailing newline
+        self.assertTrue(hide_runtime_dir_from_git(self.ws))
+        self.assertFalse(hide_runtime_dir_from_git(self.ws))
+        with open(os.path.join(info, "exclude")) as f:
+            self.assertEqual(f.read(), "*.local\n.harness/\n")
+        self.assertFalse(os.path.exists(os.path.join(self.ws, ".gitignore")))
 
 
 if __name__ == "__main__":

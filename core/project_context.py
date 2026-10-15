@@ -78,3 +78,27 @@ def build_project_instructions(workspace: str, max_chars: int = 8000) -> str:
             + listing
         )
     return "\n\n".join(parts)
+
+
+def hide_runtime_dir_from_git(workspace: str, entry: str = ".harness/") -> bool:
+    """Adds the harness runtime dir to the repo's local .git/info/exclude.
+
+    That file is per-clone and never committed, so the target project's
+    .gitignore is left alone. Returns True if an entry was added.
+    """
+    git_dir = os.path.join(workspace, ".git")
+    if not os.path.isdir(git_dir):
+        return False  # not a git repo, or a worktree/submodule with a .git file
+    exclude = os.path.join(git_dir, "info", "exclude")
+    existing = ""
+    if os.path.isfile(exclude):
+        with open(exclude, "r", encoding="utf-8", errors="replace") as f:
+            existing = f.read()
+        if entry in existing.splitlines():
+            return False
+    os.makedirs(os.path.dirname(exclude), exist_ok=True)
+    with open(exclude, "a", encoding="utf-8") as f:
+        if existing and not existing.endswith("\n"):
+            f.write("\n")
+        f.write(f"{entry}\n")
+    return True

@@ -6,8 +6,6 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = []
 
-[project.optional-dependencies]
-dev = ["pytest>=8"]
-
 [tool.pytest.ini_options]
+# Optional: the suite is plain unittest and also runs under pytest if you have it.
 testpaths = ["tests"]

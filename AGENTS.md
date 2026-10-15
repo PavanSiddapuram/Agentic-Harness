@@ -4,12 +4,12 @@ Conventions for any agent or person changing this repo. Read this before editing
 
 ## Commands
 
-- Test: `python -m pytest`
+- Test: `python -m unittest` (standard library; pytest also works if installed)
 - Smoke run: `python run.py --mock --prompt "inspect the workspace"`
 
 ## Rules
 
-- `core/` uses the Python standard library only. No new runtime dependencies there.
+- Standard library only, everywhere (`core/`, `planes/`, tests). The harness must run on any machine with Python 3.10+ and nothing else, against any codebase in any language.
 - Every change ships with a test. Every bug fix ships with a test that fails without the fix (see `tests/test_regressions.py`).
 - Changes to `core/permissions.py` must add cases to its tests for both what is blocked and what stays allowed.
 - Do not commit `.harness/` runtime data, secrets, or `.env` files.
