@@ -59,7 +59,6 @@ planes/context/       Context plane: repo map and symbol finder
 tests/                Tests for everything, plus regression tests for fixed defects
 docs/ROADMAP.md       The six planes and the build order
 docs/core-harness-prd.md   Original PRD and low-level design for core/
-docs/learning/        Study notes written while designing core/
 run.py                CLI entrypoint
 AGENTS.md             Conventions for agents (and people) changing this repo
 ```
