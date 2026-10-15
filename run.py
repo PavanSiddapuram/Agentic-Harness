@@ -15,7 +15,7 @@ from core.loop import HarnessLoop
 from core.memory import MemoryEngine
 from core.model_client import MockModelClient, RawOpenAIClient
 from core.models import ModelTurnResponse, ToolCallRequest
-from core.permissions import PermissionGate
+from core.permissions import GateConfigError, PermissionGate
 from core.project_context import build_project_instructions
 from core.state import StateStore
 from core.telemetry import TelemetryLogger
@@ -159,15 +159,20 @@ def main():
     print(f"[INIT] Model Mode: {'MOCK SIMULATION' if args.mock else args.model}")
     print(f"[INIT] Hard Ceiling: max {args.max_turns} turns | budget ${args.max_spend:.2f}\n")
 
-    loop = setup_harness(
-        workspace_root=args.workspace,
-        max_turns=args.max_turns,
-        max_token_budget=args.token_budget,
-        max_spend_usd=args.max_spend,
-        auto_approve=args.auto_approve,
-        mock_mode=args.mock,
-        model_name=args.model,
-    )
+    try:
+        loop = setup_harness(
+            workspace_root=args.workspace,
+            max_turns=args.max_turns,
+            max_token_budget=args.token_budget,
+            max_spend_usd=args.max_spend,
+            auto_approve=args.auto_approve,
+            mock_mode=args.mock,
+            model_name=args.model,
+        )
+    except GateConfigError as e:
+        # Fail closed: never run with gates we could not read.
+        print(f"[REFUSED] {e}\nFix the file or remove it, then run again.")
+        sys.exit(2)
 
     final_state = loop.run(prompt)
 

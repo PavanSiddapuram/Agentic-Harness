@@ -1,0 +1,26 @@
+{
+  "commandGates": [
+    {
+      "id": "deploy",
+      "pattern": "\\b(make|npm run|pnpm|yarn)\\s+deploy\\b|\\b(vercel|fly|netlify)\\s+deploy\\b|\\bkubectl\\s+(apply|delete|rollout)\\b",
+      "why": "Deploying reaches customers and may run migrations the agent cannot undo."
+    },
+    {
+      "id": "publish",
+      "pattern": "\\b(npm|pnpm|yarn)\\s+publish\\b|\\btwine\\s+upload\\b|\\bcargo\\s+publish\\b",
+      "why": "Publishing a package is public and permanent."
+    },
+    {
+      "id": "infra",
+      "pattern": "\\bterraform\\s+(apply|destroy)\\b",
+      "why": "Infrastructure changes cost money and can delete data."
+    }
+  ],
+  "protectedPaths": [
+    "migrations/",
+    ".github/workflows/*",
+    "*.lock",
+    ".env*",
+    "harness.gates.json"
+  ]
+}
