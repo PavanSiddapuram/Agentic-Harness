@@ -2,7 +2,7 @@
 """Set up a target repo for agent work, and report which tools are installed.
 
     python kit/setup.py doctor
-    python kit/setup.py install /path/to/repo                  # kit + local servers found
+    python kit/setup.py install /path/to/repo                  # kit + one code-graph server
     python kit/setup.py install /path/to/repo --servers sentry,grafana
     python kit/setup.py install /path/to/repo --dry-run
 
@@ -10,7 +10,9 @@
   1. Runs the vendored vjvarada/coding-agent-setup installer in the target
      (Graphify, RTK hook, AGENTS.md contract, plan/build agents, plan-guard).
   2. Merges MCP servers into the target's .mcp.json for Claude Code and other
-     MCP hosts. Existing entries are never changed.
+     MCP hosts: one code-graph server by default, others with --servers.
+     Existing entries are never changed.
+  3. Adds graphify-out/ to .cbmignore when Graphify is present.
 
 Standard library only. Nothing here is required by the harness itself.
 """

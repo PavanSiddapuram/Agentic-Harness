@@ -21,15 +21,17 @@ Chosen October 2026. Each tool is local-first, MIT or Apache licensed, works on 
 ## Why these and not others
 
 - **Graph over embeddings for code.** Structural tools answer "who calls this" and "what does this change break" exactly; embedding search answers "find code like this" approximately and needs a vector database. A [source study of eleven coding agents](https://arxiv.org/pdf/2609.00006) found none relies on embedding retrieval for code.
-- **codebase-memory-mcp as the primary graph.** It has no runtime dependencies, and per [its comparison](https://dev.to/coder11/code-review-graph-vs-graphify-vs-codebase-memory-mcp-the-best-code-intelligence-mcp-tools-for-ai-3ea) it indexed the Linux kernel (28M lines) in about 3 minutes with sub-millisecond queries. Its CLI mode lets the harness call it without an MCP client.
-- **The other graphs complement it.** Graphify covers non-code material (PRDs, RFCs, meeting notes), Serena gives compiler-accurate edits, and code-review-graph is tuned for review. They do not conflict.
+- **codebase-memory-mcp as the primary graph.** It has no runtime dependencies, and per [its comparison](https://dev.to/coder11/code-review-graph-vs-graphify-vs-codebase-memory-mcp-the-best-code-intelligence-mcp-tools-for-ai-3ea) it indexed the Linux kernel (28M lines) in about 3 minutes with sub-millisecond queries. The harness keeps its server running for the session through a small stdlib MCP client: about 5 seconds to start, then milliseconds per query (the one-shot CLI cost about 7 seconds per call on Express).
+- **One graph by default.** `setup.py` adds a single code-intelligence server (code-graph, else Graphify). Each extra server adds tools and its own "use me first" instructions, and a larger tool menu makes agents choose worse; on Express, four servers meant 59 tools. Graphify (code plus PRDs, RFCs and notes), Serena (compiler-accurate edits) and code-review-graph (review) are opt-in with `--servers`.
+- **Graphify's output stays out of the code graph.** When Graphify is present, setup adds `graphify-out/` to `.cbmignore` (not `.gitignore`, since teams may commit Graphify's graph).
 - **Read-only signals.** SRE practice in 2026 is propose-and-approve; Grafana is configured without write tools, and Sentry's write scopes stay behind its own OAuth consent.
 
 Considered and left out: Sourcegraph (needs a deployed service; worth it for many-repo orgs), Claude Context and CocoIndex (embedding-based; need a vector store or daemon), GitHub Spec Kit (overlaps the kit's plan loop). Parallel-session apps such as Agent Orchestrator, Bernstein and Vibe Kanban run several agents in git worktrees and can drive this harness or Claude Code; they are apps you run, not libraries to vendor.
 
 ## How the harness uses them
 
-- **RTK:** for each shell command, the harness asks `rtk rewrite` for a filtered equivalent. It accepts the rewrite only if it is the original command with `rtk ` prefixes inserted, so the approved command is the one that runs. Exit codes are preserved.
+- **RTK:** for each shell command, the harness asks `rtk rewrite` for a filtered equivalent. It accepts the rewrite only if it is the original command with `rtk ` prefixes inserted, so the approved command is the one that runs. Exit codes are preserved. RTK has no filter for some commands (`npm test` among them); those get the stdlib filter. If a command fails and RTK left only a recall ID (its `rtk test` mode can drop the failing test's name), the harness fetches the full output with `rtk recall`.
+- **Test output (stdlib):** passing-test lines and suite headings that only introduce passing tests fold into one marker; failures, their headings and the failure report stay. On Express's 1,261-test suite: green run 16,575 to 215 tokens; one failing function 17,508 to 1,200 tokens.
 - **codebase-memory-mcp:** indexed lazily on first use; `change_impact` re-indexes so it sees edits just made, and lists impacted callers and test files.
 - **Turning them off:** `HARNESS_NO_EXTERNAL=1` forces the standard-library path everywhere.
 

@@ -17,7 +17,7 @@ Today the repo has the agent loop (`core/`), context tools (`planes/context/`) a
 | `core/memory.py` | System prompt, plan/dirty-file anchor, sliding message window, spill-to-disk for large tool output |
 | `core/project_context.py` | Loads the target project's `AGENTS.md` (or `CLAUDE.md`, or Copilot instructions) into the prompt and lists subdirectory `AGENTS.md` files |
 | `core/output_filter.py` | Strips colour codes, progress bars, passing-test lines and repeats from command output; saves the raw output to `.harness/raw/` |
-| `core/permissions.py` | Risk tiers, destructive-command denylist, interactive approval, and project owner gates from `harness.gates.json` |
+| `core/permissions.py` | Risk tiers, destructive-command denylist, interactive approval, and project owner gates from `harness.gates.json` and/or `.claude/plan-guard.config.json` |
 | `core/evaluator.py` | Python AST and JSON validation after edits; correction hints on failed commands |
 | `core/tools/` | Jailed file tools, exact search-and-replace patcher, shell runner with timeouts |
 | `planes/context/` | `map_repository` and `find_symbol` (stdlib, any language); `trace_calls` and `change_impact` (resolved call graph, when codebase-memory-mcp is installed) |
@@ -59,7 +59,7 @@ Nothing is required. Three optional files in the target repo's root make it bett
 | File | Effect |
 | --- | --- |
 | `AGENTS.md` | Your conventions (test command, layout, rules). Inlined into the system prompt. Put more `AGENTS.md` files in subdirectories for subsystem rules; the agent is told where they are. |
-| `harness.gates.json` | Actions only a human may take: command regexes and protected path globs. Enforced before approval, even with `--auto-approve`. A malformed file stops the harness. See [docs/harness.gates.example.json](docs/harness.gates.example.json). |
+| `.claude/plan-guard.config.json` or `harness.gates.json` | Actions only a human may take: command regexes, protected paths, content patterns (such as production flag flips) and protected branches. The harness enforces either file, or both, before approval, even with `--auto-approve`; Claude Code enforces the plan-guard file through the kit's hook, so one file guards both. A malformed file stops the harness. See [docs/harness.gates.example.json](docs/harness.gates.example.json). |
 | `.harnessignore` | Extra globs for the context tools to skip (generated code, fixtures). `.gitignore` is read too. |
 
 ## Repository layout
