@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -185,10 +186,64 @@ def scan_semgrep(changes: ChangeSet) -> Tuple[List[Finding], Optional[str]]:
         return [], None
     if _SEMGREP_DISABLED:
         return [], _SEMGREP_DISABLED
+    config = _semgrep_config(changes.root)
+    remote = config.startswith(("p/", "r/", "http"))
+    if remote:
+        cached = _remote_failure(config)
+        if cached:
+            return [], cached
     result, problem = _run_semgrep(binary, changes, targets)
     if problem:
         _SEMGREP_DISABLED = problem + " (skipped for the rest of this session)"
+        if remote:
+            _remember_remote_failure(config, problem)
+    elif remote:
+        _remember_remote_failure(config, None)
     return result, problem
+
+
+# A failed registry download is remembered across runs (one CLI run per commit
+# hook or CI job would otherwise stall on every run when offline).
+REMOTE_FAILURE_TTL = 6 * 3600
+
+
+def _failure_cache_path() -> str:
+    base = os.environ.get("XDG_CACHE_HOME") or os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), ".cache")
+    return os.path.join(base, "agentic-harness", "semgrep-remote-failures.json")
+
+
+def _load_failures() -> Dict[str, Dict]:
+    try:
+        with open(_failure_cache_path(), "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _remote_failure(config: str) -> Optional[str]:
+    entry = _load_failures().get(config)
+    if not entry or time.time() - entry.get("at", 0) > REMOTE_FAILURE_TTL:
+        return None
+    return (f"semgrep skipped: fetching {config} failed {int((time.time() - entry['at']) // 60)} min ago. "
+            f"Retries after 6 h, or delete {_failure_cache_path()}; or add a .semgrep.yml for local rules.")
+
+
+def _remember_remote_failure(config: str, problem: Optional[str]) -> None:
+    data = _load_failures()
+    if problem:
+        data[config] = {"at": time.time(), "reason": problem[:200]}
+    elif config in data:
+        del data[config]
+    else:
+        return
+    path = _failure_cache_path()
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+    except OSError:
+        pass  # best effort: worst case Semgrep is tried again next run
 
 
 def _run_semgrep(binary: str, changes: ChangeSet, targets: List[FileChange]) -> Tuple[List[Finding], Optional[str]]:
@@ -202,7 +257,7 @@ def _run_semgrep(binary: str, changes: ChangeSet, targets: List[FileChange]) -> 
         proc = subprocess.run(
             [binary, "scan", "--config", config, "--json", "--metrics=off", "--quiet",
              "--disable-version-check", *by_path],
-            cwd=changes.root, capture_output=True, text=True, timeout=90 if remote else 300, env=env,
+            cwd=changes.root, capture_output=True, text=True, timeout=45 if remote else 300, env=env,
         )
     except (OSError, subprocess.TimeoutExpired) as e:
         return [], f"semgrep did not finish with config {config}: {type(e).__name__}.{hint}"

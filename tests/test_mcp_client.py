@@ -145,6 +145,13 @@ class TestCodeGraphServerMode(ServerBase):
         self.assertNotIn("very-long-project-name", out)
         self.assertIn('"project": "very-long-project-name"', json.dumps(self.calls()[1][1]))
 
+    def test_warm_up_indexes_once_in_the_background(self):
+        g = self.graph()
+        g.warm_up()
+        g.query("trace_path", {"function_name": "send"})  # waits on the lock if warm-up is mid-index
+        self.assertEqual([c[0] for c in self.calls()].count("index_repository"), 1)
+        self.assertEqual(self.starts(), 1)
+
     def test_qualified_name_gets_project_prefix_back(self):
         self.graph().query("trace_path", {"function_name": "lib.response.render"})
         self.assertEqual(self.calls()[-1][1]["function_name"], "very-long-project-name.lib.response.render")

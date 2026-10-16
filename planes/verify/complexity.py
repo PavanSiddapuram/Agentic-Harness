@@ -33,6 +33,7 @@ class FunctionComplexity:
     start: int
     end: int
     ccn: int
+    method: str = ""
 
 
 @dataclass(frozen=True)
@@ -150,16 +151,29 @@ def lizard_functions(path: str, source: str, binary: str) -> Optional[List[Funct
     return result
 
 
-def measure(path: str, source: Optional[str], lizard: Optional[str]) -> Tuple[List[FunctionComplexity], str]:
+def measure(path: str, source: Optional[str], lizard: Optional[str]) -> List[FunctionComplexity]:
+    """Functions with complexity, each tagged with how it was measured."""
     if not source:
-        return [], "none"
+        return []
     if path.endswith((".py", ".pyi")):
-        return python_functions(source), "ast"
-    if lizard:
-        measured = lizard_functions(path, source, lizard)
-        if measured is not None:
-            return measured, "lizard"
-    return heuristic_functions(path, source), "heuristic"
+        return [FunctionComplexity(f.name, f.start, f.end, f.ccn, "ast") for f in python_functions(source)]
+    heuristic = [FunctionComplexity(f.name, f.start, f.end, f.ccn, "heuristic") for f in heuristic_functions(path, source)]
+    if not lizard:
+        return heuristic
+    from_lizard = lizard_functions(path, source, lizard) or []
+    # lizard misparses some real code (TypeScript overloads made it skip or garble
+    # every later function in a file), so trust it only for functions it found
+    # where our own symbol scan found them too; otherwise keep the heuristic.
+    merged = []
+    for f in heuristic:
+        match = next((l for l in from_lizard if l.name == f.name and abs(l.start - f.start) <= 2), None)
+        merged.append(FunctionComplexity(f.name, f.start, match.end if match else f.end,
+                                         match.ccn if match else f.ccn, "lizard" if match else "heuristic"))
+    known = {(f.name, f.start) for f in merged}
+    for l in from_lizard:  # functions our patterns do not recognise (other languages)
+        if l.name != "(anonymous)" and not any(l.name == n and abs(l.start - st) <= 2 for n, st in known):
+            merged.append(FunctionComplexity(l.name, l.start, l.end, l.ccn, "lizard"))
+    return merged
 
 
 CODE_EXTS = {
@@ -176,9 +190,8 @@ def analyze(changes: ChangeSet, use_external: bool = True, threshold: int = THRE
     for change in changes.files:
         if change.status == "deleted" or change.ext not in CODE_EXTS or not change.added:
             continue
-        after, method = measure(change.path, change.new_text, lizard)
-        before, _ = measure(change.path, change.base_text, lizard)
-        methods.add(method)
+        after = measure(change.path, change.new_text, lizard)
+        before = measure(change.path, change.base_text, lizard)
         before_by_name: Dict[str, int] = {}
         for f in before:
             before_by_name.setdefault(f.name, f.ccn)
@@ -186,11 +199,12 @@ def analyze(changes: ChangeSet, use_external: bool = True, threshold: int = THRE
             touched = any(f.start <= line <= f.end for line in change.added)
             if not touched:
                 continue
+            methods.add(f.method)
             old = before_by_name.get(f.name)
             if old is None:
                 if f.ccn > threshold:
-                    results.append(ComplexityChange(change.path, f.name, f.start, None, f.ccn, method))
+                    results.append(ComplexityChange(change.path, f.name, f.start, None, f.ccn, f.method))
             elif f.ccn > old and (f.ccn > threshold or f.ccn - old >= BIG_JUMP):
-                results.append(ComplexityChange(change.path, f.name, f.start, old, f.ccn, method))
+                results.append(ComplexityChange(change.path, f.name, f.start, old, f.ccn, f.method))
     results.sort(key=lambda c: -(c.after - (c.before or 0)))
-    return results, ", ".join(sorted(methods - {"none"})) or "no code files"
+    return results, ", ".join(sorted(methods)) or "no changed functions"

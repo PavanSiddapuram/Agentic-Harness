@@ -86,6 +86,7 @@ def setup_harness(
     # Optional: call-graph tools when codebase-memory-mcp is installed. One
     # server is shared by the graph tools and review_change.
     code_graph = CodeGraph(workspace)
+    code_graph.warm_up()  # index in the background while the model plans
     for tool in graph_tools(workspace, code_graph):
         tools.register(tool)
     tools.register(ReviewChangeTool(workspace, code_graph if code_graph.available else None))

@@ -28,13 +28,15 @@ class RepoCase(unittest.TestCase):
         self.git("init", "-q", "-b", "main")
         self.git("config", "user.email", "t@example.com")
         self.git("config", "user.name", "t")
-        self.env = mock.patch.dict(os.environ, {"HARNESS_NO_EXTERNAL": "1"})
+        self.cache = tempfile.mkdtemp()
+        self.env = mock.patch.dict(os.environ, {"HARNESS_NO_EXTERNAL": "1", "XDG_CACHE_HOME": self.cache})
         self.env.start()
         security._SEMGREP_DISABLED = None
 
     def tearDown(self):
         self.env.stop()
         shutil.rmtree(self.root, ignore_errors=True)
+        shutil.rmtree(self.cache, ignore_errors=True)
 
     def git(self, *args):
         subprocess.run(["git", "-C", self.root, *args], check=True, capture_output=True)
@@ -228,6 +230,31 @@ class TestExternalScanners(RepoCase):
         self.assertIn("--config .semgrep.yml", call)
         self.assertIn("--metrics=off", call)
 
+    def test_registry_failure_is_remembered_across_runs_until_success(self):
+        semgrep = self.exe("semgrep", FAKE_SEMGREP)
+        open(semgrep + ".fail", "w").close()
+        self.commit({"README.md": "x\n"})
+        self.write("app.py", "danger()\n")
+        security.scan(self.changes())
+        security._SEMGREP_DISABLED = None  # a new process: the in-memory flag is gone
+        _, notes = security.scan(self.changes())
+        self.assertTrue(any("min ago" in n for n in notes), notes)
+        with open(semgrep + ".calls") as f:
+            self.assertEqual(len(f.read().splitlines()), 1)  # not run again
+        # Local rules are not blocked by a registry failure.
+        self.write(".semgrep.yml", "rules: []\n")
+        os.remove(semgrep + ".fail")
+        findings, _ = security.scan(self.changes())
+        self.assertTrue(any(f.source == "semgrep" for f in findings))
+
+    def test_cached_failure_expires(self):
+        security._remember_remote_failure("p/default", "offline")
+        self.assertIsNotNone(security._remote_failure("p/default"))
+        with mock.patch.object(security.time, "time", return_value=security.time.time() + security.REMOTE_FAILURE_TTL + 1):
+            self.assertIsNone(security._remote_failure("p/default"))
+        security._remember_remote_failure("p/default", None)
+        self.assertIsNone(security._remote_failure("p/default"))
+
     def test_semgrep_failure_is_reported_once_then_skipped(self):
         semgrep = self.exe("semgrep", FAKE_SEMGREP)
         open(semgrep + ".fail", "w").close()
@@ -274,6 +301,17 @@ class TestComplexity(RepoCase):
         results, method = complexity.analyze(self.changes())
         self.assertEqual(method, "ast")
         self.assertEqual([(r.function, r.before, r.after) for r in results], [("small", 1, 13)])
+
+    def test_function_lizard_misses_falls_back_to_heuristic(self):
+        branches = "".join(f"  if (a === {i}) {{ return {i} }}\n" for i in range(12))
+        src = f"export function big(a: number): number {{\n{branches}  return a\n}}\n"
+        with mock.patch.object(complexity, "lizard_functions", return_value=[]):  # lizard found nothing
+            measured = complexity.measure("x.ts", src, lizard="/fake/lizard")
+        self.assertEqual([(f.name, f.ccn, f.method) for f in measured], [("big", 13, "heuristic")])
+        with mock.patch.object(complexity, "lizard_functions",
+                               return_value=[complexity.FunctionComplexity("big", 1, 14, 13)]):
+            measured = complexity.measure("x.ts", src, lizard="/fake/lizard")
+        self.assertEqual([(f.name, f.ccn, f.method) for f in measured], [("big", 13, "lizard")])
 
     def test_new_complex_function_reported(self):
         self.commit({"README.md": "x\n"})

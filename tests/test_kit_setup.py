@@ -115,6 +115,60 @@ class TestInstall(unittest.TestCase):
             self.run_main("install", self.target, "--no-kit")
         self.assertFalse(os.path.exists(os.path.join(self.target, ".cbmignore")))
 
+    def simulate_installer(self, creates):
+        """Stand-in for the kit installer: creates the given files."""
+        def fake(target, dry_run):
+            for rel, text in creates.items():
+                os.makedirs(os.path.dirname(os.path.join(target, rel)) or target, exist_ok=True)
+                with open(os.path.join(target, rel), "w") as f:
+                    f.write(text)
+            return 0
+        return mock.patch.object(kit_setup, "run_kit_installer", side_effect=fake)
+
+    def read(self, rel):
+        with open(os.path.join(self.target, rel)) as f:
+            return f.read()
+
+    def test_import_added_when_setup_creates_claude_md_next_to_agents_md(self):
+        with open(os.path.join(self.target, "AGENTS.md"), "w") as f:
+            f.write("Run make check before committing.\n")
+        with self.simulate_installer({"CLAUDE.md": "## graphify\nrules\n", ".claude/CLAUDE.md": "# graphify skill\n"}):
+            _, out = self.run_main("install", self.target)
+        self.assertTrue(self.read("CLAUDE.md").startswith("@AGENTS.md\n\n## graphify"))
+        self.assertIn("keeps reading AGENTS.md", out)
+        with self.simulate_installer({}):
+            self.run_main("install", self.target)  # idempotent
+        self.assertEqual(self.read("CLAUDE.md").count("@AGENTS.md"), 1)
+
+    def test_import_added_when_only_dot_claude_file_is_created(self):
+        with open(os.path.join(self.target, "AGENTS.md"), "w") as f:
+            f.write("rules\n")
+        with self.simulate_installer({".claude/CLAUDE.md": "# graphify skill\n"}):
+            self.run_main("install", self.target)
+        self.assertEqual(self.read("CLAUDE.md"), "@AGENTS.md\n")
+
+    def test_teams_own_claude_md_is_never_edited(self):
+        for rel, text in {"AGENTS.md": "rules\n", "CLAUDE.md": "our own notes\n"}.items():
+            with open(os.path.join(self.target, rel), "w") as f:
+                f.write(text)
+        with self.simulate_installer({}):
+            _, out = self.run_main("install", self.target)
+        self.assertEqual(self.read("CLAUDE.md"), "our own notes\n")
+        self.assertIn("Add '@AGENTS.md' as the first line", out)
+
+    def test_existing_import_or_no_agents_md_means_no_change(self):
+        with self.simulate_installer({"CLAUDE.md": "## graphify\n"}):
+            _, out = self.run_main("install", self.target)
+        self.assertEqual(self.read("CLAUDE.md"), "## graphify\n")  # no AGENTS.md: nothing to keep loaded
+        self.assertNotIn("AGENTS.md", out)
+
+    def test_dry_run_does_not_touch_instruction_files(self):
+        with open(os.path.join(self.target, "AGENTS.md"), "w") as f:
+            f.write("rules\n")
+        _, out = self.run_main("install", self.target, "--dry-run")
+        self.assertFalse(os.path.exists(os.path.join(self.target, "CLAUDE.md")))
+        self.assertIn("would add '@AGENTS.md'", out)
+
     def test_missing_target(self):
         with self.assertRaises(SystemExit):
             self.run_main("install", os.path.join(self.target, "nope"), "--no-kit")
