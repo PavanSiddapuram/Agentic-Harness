@@ -60,6 +60,8 @@ class Report:
             return "fix the high-severity findings, then run review_change again."
         if self.risk.level == "high":
             return "address the top risk factors, or say clearly in your summary why each is acceptable."
+        if any(f.severity == "medium" for f in self.findings):
+            return "check each medium finding: fix it, or say in your summary why it is safe here."
         if self.complexity:
             return "consider splitting the functions listed under Complexity, and make sure tests cover their branches."
         return "nothing blocking found; still run the tests that cover the changed code."

@@ -10,6 +10,7 @@ with a base ref, HEAD by default.
 
 from __future__ import annotations
 
+import fnmatch
 import os
 import re
 import subprocess
@@ -17,6 +18,8 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 MAX_TEXT_BYTES = 1024 * 1024
+# Tool output that is never part of a reviewable change, even when untracked.
+GENERATED_PREFIXES = ("graphify-out/", ".harness/", ".codebase-memory/", ".serena/cache/", ".code-review-graph/")
 HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
 
@@ -80,6 +83,24 @@ def _unquote(path: str) -> str:
     if path.startswith('"') and path.endswith('"'):
         return path[1:-1].encode("latin-1", "backslashreplace").decode("unicode_escape").encode("latin-1").decode("utf-8", "replace")
     return path
+
+
+def _harnessignore(root: str) -> List[str]:
+    path = os.path.join(root, ".harnessignore")
+    if not os.path.isfile(path):
+        return []
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        return [l.strip().lstrip("/") for l in f if l.strip() and not l.lstrip().startswith(("#", "!"))]
+
+
+def _skipped(path: str, patterns: List[str]) -> bool:
+    if path.startswith(GENERATED_PREFIXES):
+        return True
+    for pat in patterns:
+        bare = pat.rstrip("/")
+        if fnmatch.fnmatch(path, bare) or fnmatch.fnmatch(path, bare + "/*") or fnmatch.fnmatch(os.path.basename(path), bare):
+            return True
+    return False
 
 
 def collect_changes(root: str, base: str = "HEAD") -> ChangeSet:
@@ -147,4 +168,6 @@ def collect_changes(root: str, base: str = "HEAD") -> ChangeSet:
             if shown.returncode == 0 and len(shown.stdout) <= MAX_TEXT_BYTES and b"\x00" not in shown.stdout[:4096]:
                 change.base_text = shown.stdout.decode("utf-8", errors="replace")
 
-    return ChangeSet(root=root, base=base, files=sorted(files.values(), key=lambda f: f.path))
+    patterns = _harnessignore(root)
+    kept = [f for f in files.values() if not _skipped(f.path, patterns)]
+    return ChangeSet(root=root, base=base, files=sorted(kept, key=lambda f: f.path))

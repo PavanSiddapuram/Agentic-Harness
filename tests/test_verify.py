@@ -91,6 +91,14 @@ class TestCollectChanges(RepoCase):
         finally:
             shutil.rmtree(outside)
 
+    def test_generated_output_and_harnessignore_are_skipped(self):
+        self.commit({".harnessignore": "# fixtures\nfixtures/\n*.snap\n"})
+        self.write("graphify-out/graph.json", "{}\n")
+        self.write("fixtures/big.py", "eval(x)\n")
+        self.write("ui/__snapshots__/a.snap", "x\n")
+        self.write("src/real.py", "x = 1\n")
+        self.assertEqual([f.path for f in self.changes().files], ["src/real.py"])
+
     def test_ignored_and_binary_files(self):
         self.commit({".gitignore": "build/\n"})
         self.write("build/out.js", "eval(x)\n")
