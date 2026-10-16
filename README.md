@@ -21,6 +21,7 @@ Today the repo has the agent loop (`core/`), context tools (`planes/context/`) a
 | `core/evaluator.py` | Python AST and JSON validation after edits; correction hints on failed commands |
 | `core/tools/` | Jailed file tools, exact search-and-replace patcher, shell runner with timeouts |
 | `planes/context/` | `map_repository` and `find_symbol` (stdlib, any language); `trace_calls` and `change_impact` (resolved call graph, when codebase-memory-mcp is installed) |
+| `planes/verify/` | `review_change`: security findings in added lines (secrets redacted), complexity increases, and an explainable risk level; `perf_check`: before/after speed and memory with a noise-aware verdict. Both scoped to the change, with gitleaks, Semgrep and lizard used when installed. The loop reminds the agent to review before finishing. |
 | `kit/` | `setup.py install <repo>` and `setup.py doctor`; vendored [vjvarada/coding-agent-setup](https://github.com/vjvarada/coding-agent-setup) |
 | `core/telemetry.py` | JSON Lines event stream to `.harness/events.jsonl` |
 | `core/model_client.py` | Raw HTTP client for any OpenAI-compatible API, plus a scripted mock |
@@ -40,6 +41,15 @@ python run.py --mock --prompt "inspect the workspace"
 export OPENAI_API_KEY=...
 export OPENAI_BASE_URL=https://api.openai.com/v1   # or any compatible endpoint
 python run.py --workspace path/to/any/repo --prompt "fix the failing test in the checkout module"
+```
+
+Review a change or check performance from the command line (CI, pre-commit, or a Claude Code hook):
+
+```bash
+python -m planes.verify.review --workspace path/to/repo                  # working tree vs HEAD
+python -m planes.verify.review --workspace path/to/repo --base origin/main --fail-on high
+python -m planes.verify.perf baseline --workspace path/to/repo --cmd "npm run bench"   # before the change
+python -m planes.verify.perf compare  --workspace path/to/repo --cmd "npm run bench"   # after
 ```
 
 Set up another repo for agent work (Claude Code, Copilot, or this harness):
@@ -67,6 +77,7 @@ Nothing is required. Three optional files in the target repo's root make it bett
 ```
 core/                 Execution plane: the agent loop and its tools
 planes/context/       Context plane: repo map, symbol finder, call-graph tools
+planes/verify/        Verification plane: change review (security, complexity, risk), perf_check
 kit/                  Setup for target repos; vendored coding-agent-setup
 tests/                Tests for everything, plus regression tests for fixed defects
 docs/ROADMAP.md       The six planes and the build order
