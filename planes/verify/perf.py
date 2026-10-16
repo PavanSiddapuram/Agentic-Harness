@@ -34,6 +34,7 @@ from core.tools.base import BaseTool
 
 THRESHOLD = 0.10
 MEMORY_FLOOR_MB = 5.0
+TIME_FLOOR_S = 0.02    # process start-up jitter; smaller differences are not measurable this way
 MAX_RUNS = 20
 
 
@@ -158,7 +159,7 @@ def _verdict(name: str, unit: str, base: Dict[str, float], new: Dict[str, float]
     bar = max(THRESHOLD, noise)
     change = f"{name}: {b:.3g}{unit} -> {n:.3g}{unit} ({rel:+.1%})"
     if abs(n - b) < floor:
-        return f"{change}: no significant change", False
+        return f"{change}: no significant change (below the {floor:g}{unit} measurement floor)", False
     if rel > bar:
         return f"{change}: REGRESSION, beyond the {bar:.0%} bar (threshold or noise)", True
     if rel < -bar:
@@ -170,7 +171,8 @@ def compare(baseline: Dict[str, Any], samples: List[Sample]) -> Tuple[List[str],
     new = summarize(samples)
     base = baseline["summary"]
     lines, regressed = [], False
-    for key, name, unit, floor in (("wall", "wall time", "s", 0.0), ("cpu", "CPU time", "s", 0.0), ("rss_mb", "peak memory", " MB", MEMORY_FLOOR_MB)):
+    for key, name, unit, floor in (("wall", "wall time", "s", TIME_FLOOR_S), ("cpu", "CPU time", "s", TIME_FLOOR_S),
+                                   ("rss_mb", "peak memory", " MB", MEMORY_FLOOR_MB)):
         if base.get(key) and new.get(key):
             text, bad = _verdict(name, unit, base[key], new[key], floor)
             lines.append(text)

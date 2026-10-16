@@ -84,6 +84,11 @@ class TestVerdict(unittest.TestCase):
         self.assertFalse(perf._verdict("t", "s", self.stats(1.0, 0.3), self.stats(1.2))[1])  # +20% but noise is 30%
         self.assertIn("improvement", perf._verdict("t", "s", self.stats(1.0), self.stats(0.7))[0])
 
+    def test_tiny_time_differences_are_below_the_floor(self):
+        # Seen in practice: CPU time 15.5 ms -> 19.5 ms (+26%) from start-up jitter alone.
+        self.assertFalse(perf._verdict("cpu", "s", self.stats(0.0155), self.stats(0.0195), floor=perf.TIME_FLOOR_S)[1])
+        self.assertTrue(perf._verdict("cpu", "s", self.stats(0.10), self.stats(0.20), floor=perf.TIME_FLOOR_S)[1])
+
     def test_memory_floor(self):
         self.assertFalse(perf._verdict("m", " MB", self.stats(10), self.stats(14), floor=5)[1])
 
