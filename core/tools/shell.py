@@ -6,10 +6,12 @@ Ensures child processes do not freeze on filled OS pipe buffers.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import uuid
 from typing import Any, Dict, Optional
 
+from core.external import find_tool, run_tool
 from core.output_filter import compress
 
 from core.models import ToolExecutionResult
@@ -29,6 +31,7 @@ class ExecuteCommandTool(BaseTool):
         default_timeout: int = 30,
         compress_output: bool = True,
         raw_log_dir: Optional[str] = None,
+        use_rtk: Optional[bool] = None,
     ):
         self.resolver = path_resolver
         self.default_timeout = default_timeout
@@ -36,6 +39,23 @@ class ExecuteCommandTool(BaseTool):
         # When output is compressed, the untouched original is saved here so
         # nothing is truly lost; the agent gets the path and can read it.
         self.raw_log_dir = raw_log_dir
+        # RTK (rtk-ai/rtk), when installed, filters 100+ command types far more
+        # thoroughly than the stdlib filter. None = use it if found on PATH.
+        self.rtk_path = find_tool("rtk") if use_rtk is not False and compress_output else None
+
+    def _rtk_rewrite(self, command: str) -> Optional[str]:
+        """Asks RTK for its equivalent of a command; None if it has no filter for it."""
+        if not self.rtk_path:
+            return None
+        code, out, _ = run_tool([self.rtk_path, "rewrite", command], timeout=10)
+        rewritten = out.strip()
+        if code not in (0, 3) or not rewritten or rewritten == command:
+            return None
+        # The approved command must be the one that runs: accept the rewrite
+        # only if it is the original with 'rtk ' prefixes inserted.
+        if re.sub(r"(?<![\w-])rtk\s+", "", rewritten) != command:
+            return None
+        return rewritten
 
     def _compress(self, stdout: str) -> str:
         if not self.compress_output or not stdout:
@@ -89,10 +109,14 @@ class ExecuteCommandTool(BaseTool):
         except PermissionError as pe:
             return ToolExecutionResult(call_id="", success=False, output=str(pe))
 
+        # Permission checks already ran on the original command; RTK only
+        # changes how its output is filtered, not what it does.
+        run_command = self._rtk_rewrite(command) or command
+
         try:
             # Popen with communicate prevents OS 64KB pipe buffer deadlock
             proc = subprocess.Popen(
-                command,
+                run_command,
                 shell=True,
                 cwd=safe_cwd,
                 stdout=subprocess.PIPE,

@@ -18,11 +18,11 @@ The agent loop is the commoditized part. The value is the environment around it:
 | Plane | Job | Lives in | Status |
 | --- | --- | --- | --- |
 | 1 Intent | Turn an issue or PRD into a failing reproduction plus acceptance commands before any fix | `planes/intake/` | Planned (P1) |
-| 2 Execution | Run the agent loop in an isolated worktree with scoped tools | `core/` | First version done |
+| 2 Execution | Run the agent loop in an isolated worktree with scoped tools | `core/` | First version done; multi-agent plan and build loops available for Claude Code via the kit; a supervisor mode in `core/` is planned |
 | 3 Verification | Preview environment with real dependencies; scenario, trace and latency-budget checks against main | `planes/verify/` | Planned (P2) |
 | 4 Delivery | Affected-target CI, flaky-test quarantine, canary watch that proposes (never executes) rollback | `planes/delivery/` | Planned (P3) |
-| 5 Signals | Read-only telemetry queries over traces, logs, metrics and deploy markers; cluster errors and complaints into issues | `planes/signals/` | Planned (P3, P4) |
-| 6 Context | Token-budgeted context pack per task: precise symbols, ownership, recent history, hot runtime paths | `planes/context/` | Started: `map_repository`, `find_symbol`, project `AGENTS.md` loading |
+| 5 Signals | Read-only telemetry queries over traces, logs, metrics and deploy markers; cluster errors and complaints into issues | `planes/signals/` | Sentry and Grafana servers configurable via `kit/setup.py`; harness-side tools planned (P3, P4) |
+| 6 Context | Token-budgeted context pack per task: precise symbols, ownership, recent history, hot runtime paths | `planes/context/` | Started: stdlib map and symbols, `AGENTS.md` loading, call graph and change impact via codebase-memory-mcp |
 | Governance | Tool risk classes, audit log, approval queue | `core/permissions.py`, later `governance/` | Partial: denylist, approval gate, `harness.gates.json` owner gates |
 
 Planes 1, 3, 5 and 6 are built as MCP servers so they also work from other agents (Claude Code, Codex), not only from `core/`.
