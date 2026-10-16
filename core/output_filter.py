@@ -27,6 +27,66 @@ PASS_LINE_RES = [
 ]
 
 
+# Lines that must never be folded away as a "group heading".
+KEEP_RE = re.compile(
+    r"fail|error|✕|×|✗|warn|deprecat|exception|traceback|assert|panic|skip|pending|todo|"
+    r"^\s*\d+\)|\d+\s+(passing|failing|passed|failed)",
+    re.IGNORECASE,
+)
+
+
+def _is_heading(line: str) -> bool:
+    """A short label line (describe block, suite name) with no failure signal."""
+    stripped = line.strip()
+    return bool(stripped) and len(stripped) <= 120 and not KEEP_RE.search(stripped)
+
+
+def _fold_passing_groups(items: List[Tuple[str, object]]) -> List[str]:
+    """Folds suite headings that only introduce passing tests into one marker.
+
+    items are ("pass", count) or ("line", text). A heading is folded only when
+    the next non-blank, non-heading item after it is a passing-test marker, so
+    headings that introduce failures, and the failure report at the end, stay.
+    """
+    n = len(items)
+    foldable = [False] * n
+    for i, (kind, value) in enumerate(items):
+        if kind == "pass":
+            foldable[i] = True
+        elif _is_heading(value):
+            j = i + 1
+            while j < n and items[j][0] == "line" and (not items[j][1].strip() or _is_heading(items[j][1])):
+                j += 1
+            foldable[i] = j < n and items[j][0] == "pass"
+    # Blank lines between two foldable items are part of the fold.
+    for i, (kind, value) in enumerate(items):
+        if kind == "line" and not value.strip():
+            prev = next((k for k in range(i - 1, -1, -1) if items[k][0] == "pass" or items[k][1].strip()), None)
+            nxt = next((k for k in range(i + 1, n) if items[k][0] == "pass" or items[k][1].strip()), None)
+            foldable[i] = prev is not None and nxt is not None and foldable[prev] and foldable[nxt]
+
+    out: List[str] = []
+    i = 0
+    while i < n:
+        if not foldable[i]:
+            out.append(items[i][1])
+            i += 1
+            continue
+        passes = groups = 0
+        while i < n and foldable[i]:
+            kind, value = items[i]
+            if kind == "pass":
+                passes += value
+            elif value.strip():
+                groups += 1
+            i += 1
+        if groups:
+            out.append(f"[{passes} passing-test lines omitted, in {groups} groups]")
+        else:
+            out.append(f"[{passes} passing-test lines omitted]")
+    return out
+
+
 def _strip_carriage_returns(line: str) -> str:
     # A progress bar redraws itself with \r; only the last frame matters.
     return line.rsplit("\r", 1)[-1] if "\r" in line else line
@@ -40,22 +100,16 @@ def compress(output: str, repeat_threshold: int = 3) -> Tuple[str, int]:
     lines = [_strip_carriage_returns(ANSI_RE.sub("", line)) for line in output.split("\n")]
     original_count = len(lines)
 
-    kept: List[str] = []
-    pass_run = 0
-
-    def flush_pass_run():
-        nonlocal pass_run
-        if pass_run:
-            kept.append(f"[{pass_run} passing-test lines omitted]")
-            pass_run = 0
-
+    items: List[Tuple[str, object]] = []
     for line in lines:
         if any(r.match(line) for r in PASS_LINE_RES):
-            pass_run += 1
-            continue
-        flush_pass_run()
-        kept.append(line)
-    flush_pass_run()
+            if items and items[-1][0] == "pass":
+                items[-1] = ("pass", items[-1][1] + 1)
+            else:
+                items.append(("pass", 1))
+        else:
+            items.append(("line", line))
+    kept = _fold_passing_groups(items)
 
     # Collapse runs of identical lines (retries, repeated warnings).
     collapsed: List[str] = []
