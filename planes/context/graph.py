@@ -3,7 +3,9 @@
 codebase-memory-mcp (DeusData, MIT) is a single static binary that indexes a
 repo with tree-sitter for 158 languages, refines call edges with language-server
 type information for about 10 of them, and answers graph queries in
-milliseconds. The harness calls its CLI mode, so no MCP client is needed.
+milliseconds. The harness keeps one server process running for the session
+(about 5 s to start, then milliseconds per query) and falls back to the
+one-shot CLI, which costs a process start per call, if the server cannot run.
 
 These tools are registered only when the binary is on PATH. Without it the
 harness still has map_repository and find_symbol from the stdlib index.
@@ -16,6 +18,7 @@ import os
 from typing import Any, Dict, List, Optional
 
 from core.external import find_tool, run_tool
+from core.mcp_client import MCPError, StdioMCPClient
 from core.models import ToolExecutionResult
 from core.tools.base import BaseTool
 
@@ -23,29 +26,53 @@ BINARY = "codebase-memory-mcp"
 
 
 class CodeGraph:
-    """Thin client for `codebase-memory-mcp cli`. Indexes lazily, once per session."""
+    """Client for codebase-memory-mcp. Indexes lazily, once per session."""
 
-    def __init__(self, root: str, binary: Optional[str] = None, index_timeout: int = 900):
+    def __init__(self, root: str, binary: Optional[str] = None, index_timeout: int = 900,
+                 use_server: bool = True):
         self.root = os.path.realpath(root)
         self.binary = binary or find_tool(BINARY)
         self.index_timeout = index_timeout
         self.project: Optional[str] = None
+        self._server: Optional[StdioMCPClient] = None
+        self._server_failed = not use_server
 
     @property
     def available(self) -> bool:
         return bool(self.binary)
 
+    @property
+    def mode(self) -> str:
+        return "server" if self._server and self._server.running else "cli"
+
+    def _server_call(self, tool: str, arguments: Dict[str, Any], timeout: float) -> Optional[str]:
+        """Calls the persistent server; returns None if it cannot be used (then use the CLI)."""
+        if self._server_failed:
+            return None
+        if self._server is None:
+            self._server = StdioMCPClient([self.binary], cwd=self.root)
+        try:
+            return self._server.call_tool(tool, arguments, timeout=timeout)
+        except MCPError as e:
+            if self._server.running and "timed out" not in str(e):
+                raise RuntimeError(str(e)[:500])  # a real tool error, not a transport failure
+            self._server.close()
+            self._server_failed = True
+            return None
+
     def ensure_indexed(self, force: bool = False) -> str:
         """Indexes the workspace (incremental on later calls) and returns the project name."""
         if self.project and not force:
             return self.project
-        code, out, err = run_tool(
-            [self.binary, "cli", "--quiet", "index_repository", json.dumps({"repo_path": self.root})],
-            cwd=self.root,
-            timeout=self.index_timeout,
-        )
-        if code != 0:
-            raise RuntimeError(f"indexing failed: {(err or out).strip()[:300]}")
+        out = self._server_call("index_repository", {"repo_path": self.root}, self.index_timeout)
+        if out is None:
+            code, out, err = run_tool(
+                [self.binary, "cli", "--quiet", "index_repository", json.dumps({"repo_path": self.root})],
+                cwd=self.root,
+                timeout=self.index_timeout,
+            )
+            if code != 0:
+                raise RuntimeError(f"indexing failed: {(err or out).strip()[:300]}")
         try:
             self.project = json.loads(out)["project"]
         except (ValueError, KeyError, TypeError):
@@ -53,16 +80,30 @@ class CodeGraph:
         return self.project
 
     def query(self, tool: str, flags: Dict[str, Any], timeout: int = 120) -> str:
-        argv: List[str] = [self.binary, "cli", "--quiet", tool, "--project", self.ensure_indexed()]
-        for key, value in flags.items():
-            if value is None:
-                continue
-            argv += [f"--{key.replace('_', '-')}", str(value).lower() if isinstance(value, bool) else str(value)]
-        code, out, err = run_tool(argv, cwd=self.root, timeout=timeout)
-        if code != 0:
-            raise RuntimeError((err or out).strip()[:500] or f"{tool} exited {code}")
+        project = self.ensure_indexed()
+        flags = dict(flags)
+        # Output has the long project prefix stripped, so a qualified name the
+        # agent copies back ("lib.response.render") needs it restored.
+        name = flags.get("function_name")
+        if isinstance(name, str) and "." in name and not name.startswith(project + "."):
+            flags["function_name"] = f"{project}.{name}"
+        arguments = {"project": project, **{k: v for k, v in flags.items() if v is not None}}
+        out = self._server_call(tool, arguments, timeout)
+        if out is None:
+            argv: List[str] = [self.binary, "cli", "--quiet", tool, "--project", project]
+            for key, value in flags.items():
+                if value is None:
+                    continue
+                argv += [f"--{key.replace('_', '-')}", str(value).lower() if isinstance(value, bool) else str(value)]
+            code, out, err = run_tool(argv, cwd=self.root, timeout=timeout)
+            if code != 0:
+                raise RuntimeError((err or out).strip()[:500] or f"{tool} exited {code}")
         # Project names embed the absolute path; strip it so output stays short.
         return out.replace(f"{self.project}.", "").replace(self.project, "<repo>").strip()
+
+    def close(self) -> None:
+        if self._server:
+            self._server.close()
 
 
 def _result(fn) -> ToolExecutionResult:
@@ -80,7 +121,8 @@ class TraceCallsTool(BaseTool):
     description = (
         "Trace the call graph of a function: who calls it (inbound), what it calls (outbound), "
         "or both, several hops deep. Edges are parsed and type-resolved, not text matches, so "
-        "use this over find_symbol to judge the blast radius of changing a function."
+        "use this over find_symbol to judge the blast radius of changing a function. If a name "
+        "is ambiguous, call again with one of the suggested qualified names."
     )
 
     def __init__(self, graph: CodeGraph):
