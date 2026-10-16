@@ -41,6 +41,18 @@ class TestChooseServers(unittest.TestCase):
             self.assertNotIn("grafana", default)
             self.assertIn("sentry", kit_setup.choose_servers(["sentry"]))
 
+    def test_one_code_graph_by_default_even_when_all_installed(self):
+        with mock.patch.object(kit_setup, "is_available", return_value=True):
+            self.assertEqual(kit_setup.choose_servers([]), ["code-graph"])
+
+    def test_graphify_is_the_fallback_primary(self):
+        with mock.patch.object(kit_setup, "is_available", side_effect=lambda r: r == "graphify.serve"):
+            self.assertEqual(kit_setup.choose_servers([]), ["graphify"])
+
+    def test_extra_servers_are_opt_in(self):
+        with mock.patch.object(kit_setup, "is_available", return_value=True):
+            self.assertEqual(kit_setup.choose_servers(["serena", "code-graph"]), ["code-graph", "serena"])
+
     def test_unknown_server_is_an_error(self):
         with self.assertRaises(SystemExit):
             kit_setup.choose_servers(["not-a-server"])
@@ -84,6 +96,24 @@ class TestInstall(unittest.TestCase):
             self.run_main("install", self.target, "--servers", "sentry", "--no-kit")
         with open(self.mcp) as f:
             self.assertEqual(f.read(), "{broken")
+
+    def test_cbmignore_added_once_when_graphify_output_exists(self):
+        os.makedirs(os.path.join(self.target, "graphify-out"))
+        with open(os.path.join(self.target, ".cbmignore"), "w") as f:
+            f.write("fixtures/")  # existing entry, no trailing newline
+        self.run_main("install", self.target, "--no-kit", "--dry-run")
+        with open(os.path.join(self.target, ".cbmignore")) as f:
+            self.assertEqual(f.read(), "fixtures/")  # dry run changed nothing
+        self.run_main("install", self.target, "--no-kit")
+        self.run_main("install", self.target, "--no-kit")
+        with open(os.path.join(self.target, ".cbmignore")) as f:
+            self.assertEqual(f.read(), "fixtures/\ngraphify-out/\n")
+        self.assertFalse(os.path.exists(os.path.join(self.target, ".gitignore")))
+
+    def test_no_cbmignore_without_graphify(self):
+        with mock.patch.object(kit_setup.shutil, "which", return_value=None):
+            self.run_main("install", self.target, "--no-kit")
+        self.assertFalse(os.path.exists(os.path.join(self.target, ".cbmignore")))
 
     def test_missing_target(self):
         with self.assertRaises(SystemExit):

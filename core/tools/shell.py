@@ -57,6 +57,20 @@ class ExecuteCommandTool(BaseTool):
             return None
         return rewritten
 
+    RECALL_RE = re.compile(r"rtk recall ([0-9a-f]{6,})")
+
+    def _recover_rtk_elision(self, stdout: str) -> str:
+        """RTK's summary modes can drop the line naming a failing test and leave a
+        recall ID instead. On failure, fetch the full output so the agent sees it."""
+        match = self.RECALL_RE.search(stdout or "")
+        rtk = self.rtk_path or find_tool("rtk")
+        if not match or not rtk:
+            return stdout
+        code, full, _ = run_tool([rtk, "recall", match.group(1)], timeout=15)
+        if code != 0 or not full.strip():
+            return stdout
+        return full.rstrip("\n") + "\n[full output recovered from rtk recall; RTK had elided it]"
+
     def _compress(self, stdout: str) -> str:
         if not self.compress_output or not stdout:
             return stdout
@@ -129,6 +143,8 @@ class ExecuteCommandTool(BaseTool):
             stdout, _ = proc.communicate(timeout=timeout)
             exit_code = proc.returncode
 
+            if exit_code != 0:
+                stdout = self._recover_rtk_elision(stdout)
             stdout = self._compress(stdout)
             output = f"Exit code: {exit_code}\nOutput:\n{stdout if stdout else '(no output)'}"
             success = exit_code == 0

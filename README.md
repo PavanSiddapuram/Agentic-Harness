@@ -17,10 +17,11 @@ Today the repo has the agent loop (`core/`), context tools (`planes/context/`) a
 | `core/memory.py` | System prompt, plan/dirty-file anchor, sliding message window, spill-to-disk for large tool output |
 | `core/project_context.py` | Loads the target project's `AGENTS.md` (or `CLAUDE.md`, or Copilot instructions) into the prompt and lists subdirectory `AGENTS.md` files |
 | `core/output_filter.py` | Strips colour codes, progress bars, passing-test lines and repeats from command output; saves the raw output to `.harness/raw/` |
-| `core/permissions.py` | Risk tiers, destructive-command denylist, interactive approval, and project owner gates from `harness.gates.json` |
+| `core/permissions.py` | Risk tiers, destructive-command denylist, interactive approval, and project owner gates from `harness.gates.json` and/or `.claude/plan-guard.config.json` |
 | `core/evaluator.py` | Python AST and JSON validation after edits; correction hints on failed commands |
 | `core/tools/` | Jailed file tools, exact search-and-replace patcher, shell runner with timeouts |
 | `planes/context/` | `map_repository` and `find_symbol` (stdlib, any language); `trace_calls` and `change_impact` (resolved call graph, when codebase-memory-mcp is installed) |
+| `planes/verify/` | `review_change`: security findings in added lines (secrets redacted), complexity increases, and an explainable risk level; `perf_check`: before/after speed and memory with a noise-aware verdict. Both scoped to the change, with gitleaks, Semgrep and lizard used when installed. The loop reminds the agent to review before finishing. |
 | `kit/` | `setup.py install <repo>` and `setup.py doctor`; vendored [vjvarada/coding-agent-setup](https://github.com/vjvarada/coding-agent-setup) |
 | `core/telemetry.py` | JSON Lines event stream to `.harness/events.jsonl` |
 | `core/model_client.py` | Raw HTTP client for any OpenAI-compatible API, plus a scripted mock |
@@ -42,6 +43,15 @@ export OPENAI_BASE_URL=https://api.openai.com/v1   # or any compatible endpoint
 python run.py --workspace path/to/any/repo --prompt "fix the failing test in the checkout module"
 ```
 
+Review a change or check performance from the command line (CI, pre-commit, or a Claude Code hook):
+
+```bash
+python -m planes.verify.review --workspace path/to/repo                  # working tree vs HEAD
+python -m planes.verify.review --workspace path/to/repo --base origin/main --fail-on high
+python -m planes.verify.perf baseline --workspace path/to/repo --cmd "npm run bench"   # before the change
+python -m planes.verify.perf compare  --workspace path/to/repo --cmd "npm run bench"   # after
+```
+
 Set up another repo for agent work (Claude Code, Copilot, or this harness):
 
 ```bash
@@ -59,7 +69,7 @@ Nothing is required. Three optional files in the target repo's root make it bett
 | File | Effect |
 | --- | --- |
 | `AGENTS.md` | Your conventions (test command, layout, rules). Inlined into the system prompt. Put more `AGENTS.md` files in subdirectories for subsystem rules; the agent is told where they are. |
-| `harness.gates.json` | Actions only a human may take: command regexes and protected path globs. Enforced before approval, even with `--auto-approve`. A malformed file stops the harness. See [docs/harness.gates.example.json](docs/harness.gates.example.json). |
+| `.claude/plan-guard.config.json` or `harness.gates.json` | Actions only a human may take: command regexes, protected paths, content patterns (such as production flag flips) and protected branches. The harness enforces either file, or both, before approval, even with `--auto-approve`; Claude Code enforces the plan-guard file through the kit's hook, so one file guards both. A malformed file stops the harness. See [docs/harness.gates.example.json](docs/harness.gates.example.json). |
 | `.harnessignore` | Extra globs for the context tools to skip (generated code, fixtures). `.gitignore` is read too. |
 
 ## Repository layout
@@ -67,6 +77,7 @@ Nothing is required. Three optional files in the target repo's root make it bett
 ```
 core/                 Execution plane: the agent loop and its tools
 planes/context/       Context plane: repo map, symbol finder, call-graph tools
+planes/verify/        Verification plane: change review (security, complexity, risk), perf_check
 kit/                  Setup for target repos; vendored coding-agent-setup
 tests/                Tests for everything, plus regression tests for fixed defects
 docs/ROADMAP.md       The six planes and the build order

@@ -5,6 +5,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 from core.output_filter import compress
 from core.tools.fs_tools import SafePathResolver
@@ -52,6 +53,35 @@ class TestCompress(unittest.TestCase):
         for drop in ["--- PASS", "ok_case", "renders header"]:
             self.assertNotIn(drop, out)
 
+    def test_mocha_suite_headings_fold_when_all_pass(self):
+        raw = "\n".join([
+            "", "  Route", "    ✔ should work", "    .all", "      ✔ should add handler", "      ✔ should handle VERBS",
+            "", "  Router", "    ✔ should return a function", "", "  12 passing (40ms)",
+        ])
+        out, _ = compress(raw)
+        self.assertNotIn("Route", out)
+        self.assertNotIn("Router", out)
+        self.assertIn("[4 passing-test lines omitted, in 3 groups]", out)
+        self.assertIn("12 passing (40ms)", out)
+
+    def test_headings_leading_to_failures_and_failure_report_stay(self):
+        raw = "\n".join([
+            "  app", "    ✔ boots", "  res", "    .links(obj)", "      1) should set Link header field",
+            "", "  1 passing (5ms)", "  1 failing", "", "  1) res", "       .links(obj)",
+            "         should set Link header field:", "     Error: expected a, got b",
+        ])
+        out, _ = compress(raw)
+        self.assertNotIn("  app", out.split("\n"))
+        for keep in ["  res", "    .links(obj)", "1) should set Link header field", "1 failing",
+                     "should set Link header field:", "Error: expected a, got b"]:
+            self.assertIn(keep, out)
+
+    def test_headings_with_failure_words_are_never_folded(self):
+        raw = "\n".join(["  error handling", "    ✔ returns 500", "  plain group", "    ✔ works"])
+        out, _ = compress(raw)
+        self.assertIn("error handling", out)
+        self.assertNotIn("plain group", out)
+
     def test_repeated_lines_collapse(self):
         out, _ = compress("\n".join(["retrying connection"] * 6 + ["connected"]))
         self.assertEqual(
@@ -81,6 +111,29 @@ class TestShellToolCompression(unittest.TestCase):
         self.assertEqual(len(saved), 1)
         with open(os.path.join(raw_dir, saved[0])) as f:
             self.assertEqual(f.read().count("test_a.py"), 5)
+
+    def test_rtk_elided_failure_is_recovered(self):
+        bindir = tempfile.mkdtemp()
+        try:
+            fake = os.path.join(bindir, "rtk")
+            with open(fake, "w") as f:
+                f.write(f"#!{sys.executable}\n" + (
+                    "import sys\n"
+                    "a = sys.argv[1:]\n"
+                    "if a[:1] == ['rewrite']: sys.exit(1)\n"
+                    "if a[:1] == ['recall']: print('ok 1\\nFAILED test_important_name\\n  at frame 1'); sys.exit(0)\n"
+                    "print('OUTPUT (last 1 lines):\\n  at frame 30\\n[full output: rtk recall abc123]'); sys.exit(1)\n"
+                ))
+            os.chmod(fake, 0o755)
+            with mock.patch.dict(os.environ, {"PATH": bindir + os.pathsep + os.environ["PATH"]}):
+                os.environ.pop("HARNESS_NO_EXTERNAL", None)
+                tool = ExecuteCommandTool(SafePathResolver(self.ws))
+                result = tool.execute({"command": "rtk test make check"})
+            self.assertFalse(result.success)
+            self.assertIn("FAILED test_important_name", result.output)
+            self.assertIn("recovered from rtk recall", result.output)
+        finally:
+            shutil.rmtree(bindir, ignore_errors=True)
 
     def test_compression_can_be_disabled(self):
         tool = ExecuteCommandTool(SafePathResolver(self.ws), compress_output=False)

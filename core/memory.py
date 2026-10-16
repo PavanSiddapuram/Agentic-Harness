@@ -71,7 +71,9 @@ class MemoryEngine:
         "1. Never rewrite entire files blindly. Use 'patch_file' with exact search and replace blocks.\n"
         "2. Ensure syntax is valid before proceeding.\n"
         "3. Run tests using 'execute_command' to verify your changes.\n"
-        "4. When a task is fully accomplished, reply with a concise final summary and no tool calls."
+        "4. Before finishing a change, run 'review_change' and fix high-severity findings.\n"
+        "   For performance work, run 'perf_check' with mode='baseline' before editing and mode='compare' after.\n"
+        "5. When a task is fully accomplished, reply with a concise final summary and no tool calls."
     )
 
     def __init__(
