@@ -49,32 +49,34 @@ TOOLS: List[Dict[str, str]] = [
 ]
 
 # MCP servers setup can add to a target's .mcp.json.
-# 'local' servers are added by default when their binary is installed;
-# the others need credentials, so they are added only when asked for.
+# By default only ONE code-intelligence server is added: the first of PRIMARY
+# that is installed. Every extra server adds tools (and "use me first"
+# instructions) the agent must choose between, and a larger tool menu makes
+# selection worse. The rest are opt-in with --servers.
 SERVERS: Dict[str, Dict] = {
     "code-graph": {
-        "requires": "codebase-memory-mcp", "local": True,
+        "requires": "codebase-memory-mcp",
         "entry": {"command": "codebase-memory-mcp"},
     },
     "serena": {
-        "requires": "serena", "local": True,
+        "requires": "serena",
         "entry": {"command": "serena", "args": ["start-mcp-server", "--context", "claude-code", "--project-from-cwd"]},
     },
     "review-graph": {
-        "requires": "code-review-graph", "local": True,
+        "requires": "code-review-graph",
         "entry": {"command": "code-review-graph", "args": ["serve"]},
     },
     "graphify": {
-        "requires": "graphify.serve", "local": True,  # python module from graphifyy[mcp]
+        "requires": "graphify.serve",  # python module from graphifyy[mcp]
         "entry": {"command": "python", "args": ["-m", "graphify.serve", "graphify-out/graph.json"]},
     },
     "sentry": {
-        "requires": None, "local": False,
+        "requires": None,
         "note": "Production errors, issues and traces. Sign in through OAuth on first use.",
         "entry": {"type": "http", "url": "https://mcp.sentry.dev/mcp"},
     },
     "grafana": {
-        "requires": "uvx", "local": False,
+        "requires": "uvx",
         "note": "Metrics, logs and traces from Grafana, read-only. Set GRAFANA_URL and GRAFANA_SERVICE_ACCOUNT_TOKEN.",
         "entry": {
             "command": "uvx", "args": ["mcp-grafana", "--disable-write"],
@@ -95,12 +97,15 @@ def is_available(requirement: Optional[str]) -> bool:
     return shutil.which(requirement) is not None
 
 
+PRIMARY = ["code-graph", "graphify"]
+
+
 def choose_servers(requested: Optional[List[str]]) -> List[str]:
-    """Local servers whose tools are installed, plus any explicitly requested."""
+    """One primary code-graph server if installed, plus any explicitly requested."""
     unknown = [s for s in (requested or []) if s not in SERVERS]
     if unknown:
         raise SystemExit(f"unknown server(s): {', '.join(unknown)}. Choose from: {', '.join(SERVERS)}")
-    chosen = [name for name, s in SERVERS.items() if s["local"] and is_available(s["requires"])]
+    chosen = [name for name in PRIMARY if is_available(SERVERS[name]["requires"])][:1]
     for name in requested or []:
         if name not in chosen:
             chosen.append(name)
@@ -132,6 +137,33 @@ def read_json(path: str) -> Dict:
     if not isinstance(data, dict):
         raise SystemExit(f"{path} must contain a JSON object.")
     return data
+
+
+def ensure_lines(path: str, lines: List[str], dry_run: bool) -> List[str]:
+    """Appends lines missing from a text file. Returns the lines added."""
+    existing = []
+    if os.path.isfile(path):
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            existing = f.read().splitlines()
+    missing = [line for line in lines if line not in existing]
+    if missing and not dry_run:
+        with open(path, "a", encoding="utf-8") as f:
+            if existing and existing[-1] != "":
+                f.write("\n")
+            f.write("\n".join(missing) + "\n")
+    return missing
+
+
+def exclude_generated_from_graph(target: str, dry_run: bool) -> None:
+    """Keeps Graphify's output out of codebase-memory-mcp's index via .cbmignore.
+
+    Not .gitignore: Graphify expects teams may commit graphify-out/graph.json.
+    """
+    if not (os.path.isdir(os.path.join(target, "graphify-out")) or shutil.which("graphify")):
+        return
+    added = ensure_lines(os.path.join(target, ".cbmignore"), ["graphify-out/"], dry_run)
+    if added:
+        print(f"   {'would add' if dry_run else 'added'} graphify-out/ to .cbmignore (keeps it out of the code graph)")
 
 
 def run_kit_installer(target: str, dry_run: bool) -> int:
@@ -170,6 +202,8 @@ def install(target: str, requested: Optional[List[str]], skip_kit: bool, dry_run
 
     status = 0 if skip_kit else run_kit_installer(target, dry_run)
 
+    exclude_generated_from_graph(target, dry_run)
+
     mcp_path = os.path.join(target, ".mcp.json")
     names = choose_servers(requested)
     merged, added, kept = merge_mcp(read_json(mcp_path), names)
@@ -181,8 +215,8 @@ def install(target: str, requested: Optional[List[str]], skip_kit: bool, dry_run
         print(f"   kept existing: {name}")
     skipped = [n for n, s in SERVERS.items() if n not in names]
     if skipped:
-        print("   not added (tool missing or needs credentials): " + ", ".join(skipped)
-              + ". Add with --servers name,... after installing.")
+        print("   not added: " + ", ".join(skipped)
+              + ". One code graph is added by default; add others with --servers name,...")
     if added and not dry_run:
         with open(mcp_path, "w", encoding="utf-8") as f:
             json.dump(merged, f, indent=2)
