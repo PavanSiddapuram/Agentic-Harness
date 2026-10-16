@@ -19,7 +19,7 @@ from core.models import PermissionLevel, ToolCallRequest
 # Tools that only read the workspace; they run without a prompt.
 READ_ONLY_TOOLS = {
     "read_file", "search_directory", "list_dir", "map_repository", "find_symbol",
-    "trace_calls", "change_impact",
+    "trace_calls", "change_impact", "review_change",
 }
 
 

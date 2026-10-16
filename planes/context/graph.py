@@ -201,9 +201,12 @@ class ChangeImpactTool(BaseTool):
         return _result(run)
 
 
-def graph_tools(root: str) -> List[BaseTool]:
-    """Returns the graph tools if codebase-memory-mcp is installed, else an empty list."""
-    graph = CodeGraph(root)
+def graph_tools(root: str, graph: Optional[CodeGraph] = None) -> List[BaseTool]:
+    """Returns the graph tools if codebase-memory-mcp is installed, else an empty list.
+
+    Pass a shared CodeGraph so other tools (review_change) reuse the same server.
+    """
+    graph = graph or CodeGraph(root)
     if not graph.available:
         return []
     return [TraceCallsTool(graph), ChangeImpactTool(graph)]

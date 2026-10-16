@@ -39,6 +39,28 @@ class HarnessLoop:
         self.tools = tools
         self.evaluator = evaluator
         self.telemetry = telemetry or TelemetryLogger()
+        # Verify-on-stop: order of the last file edit and the last review_change.
+        self._seq = 0
+        self._last_edit_seq: Optional[int] = None
+        self._last_review_seq: Optional[int] = None
+        self._nudged_for_edit: Optional[int] = None
+        self._review_nudges = 0
+
+    MAX_REVIEW_NUDGES = 2
+    REVIEW_NUDGE = (
+        "[HARNESS] You changed files but have not run review_change since your last edit. "
+        "Run review_change now, fix any high-severity findings, then give your final answer."
+    )
+
+    def _should_nudge_review(self) -> bool:
+        """True when the agent tries to finish with unreviewed edits (once per batch of edits)."""
+        return (
+            self.tools.get_tool("review_change") is not None
+            and self._last_edit_seq is not None
+            and (self._last_review_seq is None or self._last_review_seq < self._last_edit_seq)
+            and self._nudged_for_edit != self._last_edit_seq
+            and self._review_nudges < self.MAX_REVIEW_NUDGES
+        )
 
     @property
     def state(self) -> ExecutionState:
@@ -107,6 +129,12 @@ class HarnessLoop:
             # 6. Check for pure conversational response (No tool calls -> Terminal)
             if not response.tool_calls:
                 self.memory.add_assistant_message(response.text)
+                if self._should_nudge_review():
+                    self._nudged_for_edit = self._last_edit_seq
+                    self._review_nudges += 1
+                    self.memory.add_user_message(self.REVIEW_NUDGE)
+                    self.telemetry.emit("REVIEW_NUDGE", {"turn": turn})
+                    continue
                 self.state_store.terminate("Goal completed: agent emitted final response.")
                 self.telemetry.emit("GOAL_COMPLETED", {"response": response.text})
                 break
@@ -186,8 +214,12 @@ class HarnessLoop:
         eval_result = self.evaluator.evaluate(tool_call, raw_result)
 
         # D. State Reconcile
+        self._seq += 1
         if eval_result.modified_files:
             self.state_store.mark_dirty_files(eval_result.modified_files)
+            self._last_edit_seq = self._seq
+        if tool_call.tool_name == "review_change" and eval_result.success:
+            self._last_review_seq = self._seq
 
         # Check infinite loop tripwire for identical consecutive failing calls
         can_proceed = self.state_store.record_tool_call_outcome(

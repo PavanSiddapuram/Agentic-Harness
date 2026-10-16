@@ -29,9 +29,10 @@ from core.tools.fs_tools import (
 )
 from core.tools.patcher import PatchFileTool
 from core.tools.shell import ExecuteCommandTool
-from planes.context.graph import graph_tools
+from planes.context.graph import CodeGraph, graph_tools
 from planes.context.index import RepoIndex
 from planes.context.tools import FindSymbolTool, MapRepositoryTool
+from planes.verify.review import ReviewChangeTool
 
 
 def print_banner():
@@ -81,9 +82,12 @@ def setup_harness(
     repo_index = RepoIndex(workspace)
     tools.register(MapRepositoryTool(repo_index))
     tools.register(FindSymbolTool(repo_index))
-    # Optional: call-graph tools when codebase-memory-mcp is installed.
-    for tool in graph_tools(workspace):
+    # Optional: call-graph tools when codebase-memory-mcp is installed. One
+    # server is shared by the graph tools and review_change.
+    code_graph = CodeGraph(workspace)
+    for tool in graph_tools(workspace, code_graph):
         tools.register(tool)
+    tools.register(ReviewChangeTool(workspace, code_graph if code_graph.available else None))
     tools.register(
         ExecuteCommandTool(resolver, raw_log_dir=os.path.join(workspace, ".harness", "raw"))
     )
