@@ -70,7 +70,16 @@ Nothing is required. Three optional files in the target repo's root make it bett
 | --- | --- |
 | `AGENTS.md` | Your conventions (test command, layout, rules). Inlined into the system prompt. Put more `AGENTS.md` files in subdirectories for subsystem rules; the agent is told where they are. |
 | `.claude/plan-guard.config.json` or `harness.gates.json` | Actions only a human may take: command regexes, protected paths, content patterns (such as production flag flips) and protected branches. The harness enforces either file, or both, before approval, even with `--auto-approve`; Claude Code enforces the plan-guard file through the kit's hook, so one file guards both. A malformed file stops the harness. See [docs/harness.gates.example.json](docs/harness.gates.example.json). |
-| `.harnessignore` | Extra globs for the context tools to skip (generated code, fixtures). `.gitignore` is read too. |
+| `.harnessignore` | Extra globs for the context tools and change review to skip (generated code, fixtures). `.gitignore` is read too. |
+
+### Rollout on an existing codebase
+
+1. Clone this repo outside your project, install the optional tools you want, and run `python kit/setup.py doctor`.
+2. In your project, on a new branch: `python <harness>/kit/setup.py install . --dry-run`, then without `--dry-run`. It only adds files; it does not modify tracked files. If you already have an `AGENTS.md`, it is kept, and Claude Code is pointed at it with an `@AGENTS.md` import in the `CLAUDE.md` setup creates.
+3. Edit `AGENTS.md` (real test and build commands, layout, rules) and `.claude/plan-guard.config.json` (your deploy, migration and production-flag commands). These two files decide most of the quality.
+4. Commit `AGENTS.md`, `CLAUDE.md`, `.claude/`, `.mcp.json`, `.cbmignore` and `.graphifyignore`. Commit `graphify-out/` only if the team wants the shared graph.
+5. Add the review to CI as a report first (`python -m planes.verify.review --base origin/main`), and make it blocking (`--fail-on high`) once its findings look right on your code.
+6. Run agents on real tickets with approval on (no `--auto-approve`) until you trust the gates. There is no sandbox yet: approved shell commands run on your machine.
 
 ## Repository layout
 

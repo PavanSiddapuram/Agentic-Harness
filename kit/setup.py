@@ -24,6 +24,7 @@ import copy
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -174,6 +175,45 @@ def exclude_generated_from_graph(target: str, dry_run: bool) -> None:
         print(f"   {'would add' if dry_run else 'added'} graphify-out/ to .cbmignore (keeps it out of the code graph)")
 
 
+CLAUDE_FILES = ("CLAUDE.md", os.path.join(".claude", "CLAUDE.md"))
+IMPORT_RE = re.compile(r"^@(\.\./)?AGENTS\.md\s*$", re.MULTILINE)
+
+
+def keep_agents_md_loaded(target: str, claude_existed: Dict[str, bool], dry_run: bool) -> None:
+    """Keeps Claude Code reading the repo's AGENTS.md after setup.
+
+    Claude Code reads only CLAUDE.md when both CLAUDE.md and AGENTS.md exist.
+    The kit's Graphify step creates CLAUDE.md, which would silently stop
+    Claude Code from following the team's AGENTS.md. When setup created the
+    CLAUDE.md files, add the documented `@AGENTS.md` import; never edit a
+    CLAUDE.md the team already had, only warn.
+    """
+    if not os.path.isfile(os.path.join(target, "AGENTS.md")):
+        return
+    present = [f for f in CLAUDE_FILES if os.path.isfile(os.path.join(target, f))]
+    if not present and not dry_run:
+        return
+    for rel in present:
+        with open(os.path.join(target, rel), "r", encoding="utf-8", errors="replace") as fh:
+            if IMPORT_RE.search(fh.read()):
+                return
+    if any(claude_existed.values()):
+        print("   note: Claude Code reads only CLAUDE.md when both CLAUDE.md and AGENTS.md exist. "
+              "Add '@AGENTS.md' as the first line of CLAUDE.md if AGENTS.md should apply.")
+        return
+    root = os.path.join(target, "CLAUDE.md")
+    if dry_run:
+        print("   would add '@AGENTS.md' to CLAUDE.md if setup creates one (keeps AGENTS.md loaded in Claude Code)")
+        return
+    existing = ""
+    if os.path.isfile(root):
+        with open(root, "r", encoding="utf-8", errors="replace") as fh:
+            existing = fh.read()
+    with open(root, "w", encoding="utf-8") as fh:
+        fh.write("@AGENTS.md\n" + ("\n" + existing if existing else ""))
+    print("   added '@AGENTS.md' to CLAUDE.md so Claude Code keeps reading AGENTS.md")
+
+
 def run_kit_installer(target: str, dry_run: bool) -> int:
     if os.name == "nt":
         shell = shutil.which("pwsh") or shutil.which("powershell")
@@ -208,8 +248,11 @@ def install(target: str, requested: Optional[List[str]], skip_kit: bool, dry_run
     if not os.path.isdir(target):
         raise SystemExit(f"target is not a directory: {target}")
 
+    claude_existed = {f: os.path.isfile(os.path.join(target, f)) for f in CLAUDE_FILES}
     status = 0 if skip_kit else run_kit_installer(target, dry_run)
 
+    print("\n== Agent instructions")
+    keep_agents_md_loaded(target, claude_existed, dry_run)
     exclude_generated_from_graph(target, dry_run)
 
     mcp_path = os.path.join(target, ".mcp.json")

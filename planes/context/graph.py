@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from typing import Any, Dict, List, Optional
 
 from core.external import find_tool, run_tool
@@ -36,6 +37,21 @@ class CodeGraph:
         self.project: Optional[str] = None
         self._server: Optional[StdioMCPClient] = None
         self._server_failed = not use_server
+        self._index_lock = threading.Lock()
+
+    def warm_up(self) -> None:
+        """Starts the server and indexes in the background, so the agent's first
+        graph query does not wait (about 26 s on a 3,650-file monorepo)."""
+        if not self.available:
+            return
+
+        def run() -> None:
+            try:
+                self.ensure_indexed()
+            except Exception:
+                pass  # the first real query will retry and report the error
+
+        threading.Thread(target=run, name="code-graph-warm-up", daemon=True).start()
 
     @property
     def available(self) -> bool:
@@ -64,6 +80,12 @@ class CodeGraph:
         """Indexes the workspace (incremental on later calls) and returns the project name."""
         if self.project and not force:
             return self.project
+        with self._index_lock:  # a warm-up and a tool call must not index twice
+            if self.project and not force:
+                return self.project
+            return self._index()
+
+    def _index(self) -> str:
         out = self._server_call("index_repository", {"repo_path": self.root}, self.index_timeout)
         if out is None:
             code, out, err = run_tool(
