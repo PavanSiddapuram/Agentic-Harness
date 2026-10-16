@@ -151,7 +151,8 @@ class PermissionGate:
                     raise SecurityException(self._gate_message(gate, "in the content being written"))
             return PermissionLevel.CONFIRMATION
 
-        if call.tool_name == "execute_command":
+        if call.tool_name in ("execute_command", "perf_check"):
+            # perf_check runs its command repeatedly: same gates, same approval.
             self.check_command(call.parameters.get("command", ""))
             return PermissionLevel.RESTRICTED
 

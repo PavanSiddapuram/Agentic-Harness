@@ -32,6 +32,7 @@ from core.tools.shell import ExecuteCommandTool
 from planes.context.graph import CodeGraph, graph_tools
 from planes.context.index import RepoIndex
 from planes.context.tools import FindSymbolTool, MapRepositoryTool
+from planes.verify.perf import PerfCheckTool
 from planes.verify.review import ReviewChangeTool
 
 
@@ -88,6 +89,7 @@ def setup_harness(
     for tool in graph_tools(workspace, code_graph):
         tools.register(tool)
     tools.register(ReviewChangeTool(workspace, code_graph if code_graph.available else None))
+    tools.register(PerfCheckTool(workspace))
     tools.register(
         ExecuteCommandTool(resolver, raw_log_dir=os.path.join(workspace, ".harness", "raw"))
     )
