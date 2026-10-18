@@ -125,6 +125,10 @@ def keep_going(host: str, reason: str) -> int:
 def check_pre(host: str, payload: Dict[str, Any]) -> int:
     from core.permissions import GateConfigError, PermissionGate, SecurityException
 
+    # Cursor fires preToolUse for shell commands too; beforeShellExecution already
+    # checked them, so skip the second check instead of paying for it twice.
+    if host == "cursor" and str(payload.get("tool_name") or "").lower() in SHELL_TOOLS:
+        return 0
     command, writes = normalize(payload)
     if command is None and not writes:
         return 0
