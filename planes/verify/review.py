@@ -91,9 +91,9 @@ def _impacted_callers(graph) -> Optional[int]:
     return int(m.group(1)) if m else None
 
 
-def run_review(root: str, base: str = "HEAD", use_external: bool = True, graph=None) -> Report:
+def run_review(root: str, base: str = "HEAD", use_external: bool = True, graph=None, semgrep: bool = True) -> Report:
     changes: ChangeSet = collect_changes(root, base)
-    findings, scanners = security.scan(changes, use_external=use_external)
+    findings, scanners = security.scan(changes, use_external=use_external, semgrep=semgrep)
     increases, method = complexity_mod.analyze(changes, use_external=use_external)
     impacted = _impacted_callers(graph) if base == "HEAD" else None
     risk = assess(changes, findings, increases, impacted)
