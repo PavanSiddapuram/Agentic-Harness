@@ -19,3 +19,14 @@ jobs:
       # Standard library only: no install step on purpose.
       - run: python -m unittest -v
       - run: python run.py --mock --workspace "$RUNNER_TEMP" --prompt "smoke test"
+      # The way teammates install it: the commands host configs call must work from PATH.
+      - name: Install and start the MCP server from PATH
+        run: |
+          python -m pip install .
+          cd "$RUNNER_TEMP" && git init -q probe && cd probe
+          printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}' \
+                        '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+            | agentic-harness-mcp | python -c "import json,sys; r=[json.loads(l) for l in sys.stdin]; t=r[1]['result']['tools']; assert 4 <= len(t) <= 6, t; print([x['name'] for x in t])"
+          echo '{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}' | agentic-harness-gate --host claude pre && exit 1 || test $? -eq 2
+          agentic-harness-setup install . --hosts all --no-kit
+          test -f .codex/hooks.json && test -f .gemini/settings.json && test -f .cursor/hooks.json && test -f .kimi-code/mcp.json
