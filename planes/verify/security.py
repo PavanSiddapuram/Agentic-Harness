@@ -278,12 +278,13 @@ def _run_semgrep(binary: str, changes: ChangeSet, targets: List[FileChange]) -> 
     return findings, None
 
 
-def scan(changes: ChangeSet, use_external: bool = True) -> Tuple[List[Finding], List[str]]:
+def scan(changes: ChangeSet, use_external: bool = True, semgrep: bool = True) -> Tuple[List[Finding], List[str]]:
     """Returns (findings sorted most severe first, notes about the scanners that ran)."""
     findings = scan_builtin(changes)
     notes = ["builtin rules"]
     if use_external:
-        for name, scanner in (("gitleaks", scan_gitleaks), ("semgrep", scan_semgrep)):
+        scanners = [("gitleaks", scan_gitleaks)] + ([("semgrep", scan_semgrep)] if semgrep else [])
+        for name, scanner in scanners:
             extra, problem = scanner(changes)
             if problem:
                 notes.append(problem)

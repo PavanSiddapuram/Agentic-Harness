@@ -1,104 +1,79 @@
 # Agentic Harness
 
-A full-lifecycle harness for coding agents working on large codebases: from a PRD or bug report, through code and tests, to CI, rollout and production signals, and back into the next spec.
+A thin layer that makes the coding agent you already use better on a large codebase. It works with Claude Code, Codex, Gemini CLI, Cursor, Kimi Code and VS Code Copilot, alone or mixed in one team.
 
-**Zero required dependencies.** The harness runs on the Python 3.10+ standard library and works against a codebase in any language: point `--workspace` at it.
+Those agents already read and edit files, run commands, plan, run subagents and sandbox. The harness does not compete with them. It adds what they lack on a big repo, through the two extension points they all share:
 
-**Stronger when the best tools are installed.** It picks up [RTK](https://github.com/rtk-ai/rtk) and [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) automatically, and `kit/setup.py` wires a target repo for Claude Code with vjvarada's multi-agent plan and build loops, Graphify, Serena, code-review-graph, and read-only Sentry and Grafana servers. See [docs/TOOLING.md](docs/TOOLING.md) for what each adds and why it was chosen.
+- **One MCP server** (6 tools at most): find code without reading files (`map_repository`, `find_symbol`), real call graphs and change impact (`trace_calls`, `change_impact`), a security, complexity and risk review of your change (`review_change`), and a before/after speed and memory check (`perf_check`).
+- **One hook**: before a shell command or file write, the team's gate file decides what only a human may do (deploy, publish, migrations, production flags, `.env`, protected branches). When the agent tries to finish, the change is reviewed and the agent is sent back once if it added a secret, an injection or similar high-severity issue.
 
-Today the repo has the agent loop (`core/`), context tools (`planes/context/`) and the setup kit (`kit/`). The rest of the lifecycle is planned in [docs/ROADMAP.md](docs/ROADMAP.md).
-
-## What works today
-
-| Piece | What it does |
-| --- | --- |
-| `core/loop.py` | Turn loop: budget checks, inference, permission gate, tool dispatch, evaluation |
-| `core/state.py` | Session state with atomic writes to `.harness/session.json`; turn, token and dollar ceilings; repeated-failure trip-wire |
-| `core/memory.py` | System prompt, plan/dirty-file anchor, sliding message window, spill-to-disk for large tool output |
-| `core/project_context.py` | Loads the target project's `AGENTS.md` (or `CLAUDE.md`, or Copilot instructions) into the prompt and lists subdirectory `AGENTS.md` files |
-| `core/output_filter.py` | Strips colour codes, progress bars, passing-test lines and repeats from command output; saves the raw output to `.harness/raw/` |
-| `core/permissions.py` | Risk tiers, destructive-command denylist, interactive approval, and project owner gates from `harness.gates.json` and/or `.claude/plan-guard.config.json` |
-| `core/evaluator.py` | Python AST and JSON validation after edits; correction hints on failed commands |
-| `core/tools/` | Jailed file tools, exact search-and-replace patcher, shell runner with timeouts |
-| `planes/context/` | `map_repository` and `find_symbol` (stdlib, any language); `trace_calls` and `change_impact` (resolved call graph, when codebase-memory-mcp is installed) |
-| `planes/verify/` | `review_change`: security findings in added lines (secrets redacted), complexity increases, and an explainable risk level; `perf_check`: before/after speed and memory with a noise-aware verdict. Both scoped to the change, with gitleaks, Semgrep and lizard used when installed. The loop reminds the agent to review before finishing. |
-| `kit/` | `setup.py install <repo>` and `setup.py doctor`; vendored [vjvarada/coding-agent-setup](https://github.com/vjvarada/coding-agent-setup) |
-| `core/telemetry.py` | JSON Lines event stream to `.harness/events.jsonl` |
-| `core/model_client.py` | Raw HTTP client for any OpenAI-compatible API, plus a scripted mock |
-
-Known limits, on purpose for now: no sandbox (shell commands run on the host after approval), a character-based token estimate, regex-based symbols for non-Python languages, and a denylist that is defense in depth, not a security boundary.
+**Zero required dependencies.** Python 3.10+ standard library only, and any language in the target repo. Optional tools ([codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp), [gitleaks](https://github.com/gitleaks/gitleaks), [Semgrep](https://github.com/semgrep/semgrep), [lizard](https://github.com/terryyin/lizard), [RTK](https://github.com/rtk-ai/rtk)) are used when installed. See [docs/TOOLING.md](docs/TOOLING.md).
 
 ## Quickstart
 
 ```bash
-# Run the tests (standard library unittest; pytest also works if you have it)
-python -m unittest
+# 1. Install the harness once per machine (puts agentic-harness-* commands on PATH)
+pipx install git+https://github.com/PavanSiddapuram/Agentic-Harness
+#    or: uv tool install git+https://github.com/PavanSiddapuram/Agentic-Harness
 
-# Try the loop with the scripted mock model (no API key needed)
-python run.py --mock --prompt "inspect the workspace"
+# 2. In your project, on a branch: see what would change, then do it
+agentic-harness-setup install . --dry-run
+agentic-harness-setup install .                       # agents found on this machine or in the repo
+agentic-harness-setup install . --hosts codex,cursor  # or name them; --hosts all
 
-# Run against a real model on any repo
-export OPENAI_API_KEY=...
-export OPENAI_BASE_URL=https://api.openai.com/v1   # or any compatible endpoint
-python run.py --workspace path/to/any/repo --prompt "fix the failing test in the checkout module"
+# 3. Open your agent in the project and accept its trust / approval prompt
 ```
 
-Review a change or check performance from the command line (CI, pre-commit, or a Claude Code hook):
+Setup only adds entries; it never changes ones already there. Commit what it writes, so teammates get the same server, hooks and gates. Each teammate needs step 1 once.
 
-```bash
-python -m planes.verify.review --workspace path/to/repo                  # working tree vs HEAD
-python -m planes.verify.review --workspace path/to/repo --base origin/main --fail-on high
-python -m planes.verify.perf baseline --workspace path/to/repo --cmd "npm run bench"   # before the change
-python -m planes.verify.perf compare  --workspace path/to/repo --cmd "npm run bench"   # after
-```
+| Agent | What setup writes | What you get |
+| --- | --- | --- |
+| Claude Code | `.mcp.json`, `.claude/settings.json`, plus the vendored [vjvarada kit](https://github.com/vjvarada/coding-agent-setup): plan/build agents, plan-guard, Graphify | tools, gates, review on stop, `/plan-feature` and `/next-ticket` |
+| Codex | `.codex/config.toml`, `.codex/hooks.json` | tools, gates (shell and `apply_patch`), review on stop |
+| Gemini CLI | `.gemini/settings.json` (also tells it to read `AGENTS.md`) | tools, gates, review after each turn |
+| Cursor | `.cursor/mcp.json`, `.cursor/hooks.json` | tools, gates, review on stop |
+| Kimi Code | `.kimi-code/mcp.json`; prints a hook block for `~/.kimi-code/config.toml` (Kimi reads hooks only there) | tools; gates and review once you paste the block |
+| VS Code Copilot | `.mcp.json` | tools |
 
-Set up another repo for agent work (Claude Code, Copilot, or this harness):
+Per-agent details, what was verified with each real CLI, and the tradeoffs are in [docs/HOSTS.md](docs/HOSTS.md).
 
-```bash
-python kit/setup.py doctor                         # which optional tools you have
-python kit/setup.py install path/to/repo --dry-run # see what it would change
-python kit/setup.py install path/to/repo           # add --servers sentry,grafana for production signals
-```
-
-`--auto-approve` skips confirmation prompts, including shell commands. The denylist and the project's owner gates still apply. Use it only in a throwaway workspace.
-
-## Using it on your project
-
-Nothing is required. Three optional files in the target repo's root make it better:
+## Files your repo can add
 
 | File | Effect |
 | --- | --- |
-| `AGENTS.md` | Your conventions (test command, layout, rules). Inlined into the system prompt. Put more `AGENTS.md` files in subdirectories for subsystem rules; the agent is told where they are. |
-| `.claude/plan-guard.config.json` or `harness.gates.json` | Actions only a human may take: command regexes, protected paths, content patterns (such as production flag flips) and protected branches. The harness enforces either file, or both, before approval, even with `--auto-approve`; Claude Code enforces the plan-guard file through the kit's hook, so one file guards both. A malformed file stops the harness. See [docs/harness.gates.example.json](docs/harness.gates.example.json). |
-| `.harnessignore` | Extra globs for the context tools and change review to skip (generated code, fixtures). `.gitignore` is read too. |
+| `AGENTS.md` | Your conventions (test command, layout, rules). Every supported agent reads it. Setup writes a template if you have none. |
+| `.claude/plan-guard.config.json` or `harness.gates.json` | What only a human may do: command patterns, protected paths, content patterns (production flag flips), protected branches. Enforced by the hook for every agent, before the agent's own approval. A malformed file blocks everything until fixed. Example: [docs/harness.gates.example.json](docs/harness.gates.example.json). |
+| `.harnessignore` | Globs the context tools and the review skip (generated code, fixtures). `.gitignore` is read too. |
 
-### Rollout on an existing codebase
+## Also usable without an agent
 
-1. Clone this repo outside your project, install the optional tools you want, and run `python kit/setup.py doctor`.
-2. In your project, on a new branch: `python <harness>/kit/setup.py install . --dry-run`, then without `--dry-run`. It only adds files; it does not modify tracked files. If you already have an `AGENTS.md`, it is kept, and Claude Code is pointed at it with an `@AGENTS.md` import in the `CLAUDE.md` setup creates.
-3. Edit `AGENTS.md` (real test and build commands, layout, rules) and `.claude/plan-guard.config.json` (your deploy, migration and production-flag commands). These two files decide most of the quality.
-4. Commit `AGENTS.md`, `CLAUDE.md`, `.claude/`, `.mcp.json`, `.cbmignore` and `.graphifyignore`. Commit `graphify-out/` only if the team wants the shared graph.
-5. Add the review to CI as a report first (`python -m planes.verify.review --base origin/main`), and make it blocking (`--fail-on high`) once its findings look right on your code.
-6. Run agents on real tickets with approval on (no `--auto-approve`) until you trust the gates. There is no sandbox yet: approved shell commands run on your machine.
+```bash
+agentic-harness-review --workspace . --base origin/main --fail-on high   # in CI
+agentic-harness-perf baseline --workspace . --cmd "npm run bench"        # before a change
+agentic-harness-perf compare  --workspace . --cmd "npm run bench"        # after
+agentic-harness-setup doctor                                             # which optional tools you have
+```
+
+Roll the review into CI as a report first, and make it blocking once its findings look right on your code.
+
+## The reference loop (frozen)
+
+`core/` also contains a small agent loop (`agentic-harness-run`, any OpenAI-compatible API) used for tests, scripted CI runs and as a reference. It is deliberately frozen: host agents own execution, so new capabilities go into the MCP server, the hook or a CLI, where every agent gets them. `tests/test_budget.py` enforces this with size budgets.
 
 ## Repository layout
 
 ```
-core/                 Execution plane: the agent loop and its tools
-planes/context/       Context plane: repo map, symbol finder, call-graph tools
-planes/verify/        Verification plane: change review (security, complexity, risk), perf_check
-kit/                  Setup for target repos; vendored coding-agent-setup
-tests/                Tests for everything, plus regression tests for fixed defects
-docs/ROADMAP.md       The six planes and the build order
-docs/TOOLING.md       Optional tools, why each was chosen, how the harness uses them
-docs/core-harness-prd.md   Original PRD and low-level design for core/
-run.py                CLI entrypoint
-AGENTS.md             Conventions for agents (and people) changing this repo
+mcp_server.py         The MCP server every host agent loads
+kit/gate_hook.py      The hook every host agent runs (gates before tools, review on stop)
+kit/hosts.py          Where each agent keeps its config, and safe merging into it
+kit/setup.py          install / doctor
+kit/coding-agent-setup/   vjvarada/coding-agent-setup, vendored unchanged (MIT)
+planes/context/       Repo map, symbol finder, call-graph tools
+planes/verify/        Change review (security, complexity, risk), perf_check
+core/                 Shared pieces (gates, project instructions, output filter, MCP client) and the frozen loop
+tests/                Tests for everything, including size and tool budgets
+docs/                 HOSTS.md, TOOLING.md, ROADMAP.md
 ```
-
-## Credits
-
-`kit/coding-agent-setup/` is [vjvarada/coding-agent-setup](https://github.com/vjvarada/coding-agent-setup), vendored unchanged under its MIT license. The harness's own project-instructions loader, output filter, context tools and owner gates reimplement its ideas (DOX contracts, RTK, Graphify, plan-guard) in the standard library, so they work with nothing installed.
 
 ## Contributing
 

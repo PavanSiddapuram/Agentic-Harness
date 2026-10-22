@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
-"""Set up a target repo for agent work, and report which tools are installed.
+"""Set up a target repo for the coding agents a team already uses.
 
     python kit/setup.py doctor
-    python kit/setup.py install /path/to/repo                  # kit + one code-graph server
+    python kit/setup.py install /path/to/repo                       # agents found on this machine/repo
+    python kit/setup.py install /path/to/repo --hosts codex,cursor  # or name them; --hosts all
     python kit/setup.py install /path/to/repo --servers sentry,grafana
     python kit/setup.py install /path/to/repo --dry-run
 
-`install` does two things, both idempotent and non-destructive:
-  1. Runs the vendored vjvarada/coding-agent-setup installer in the target
-     (Graphify, RTK hook, AGENTS.md contract, plan/build agents, plan-guard).
-  2. Merges MCP servers into the target's .mcp.json for Claude Code and other
-     MCP hosts: one code-graph server by default, others with --servers.
-     Existing entries are never changed.
-  3. Adds graphify-out/ to .cbmignore when Graphify is present.
+`install` is idempotent and non-destructive (it adds entries, never changes
+existing ones):
+  1. For Claude Code, runs the vendored vjvarada/coding-agent-setup installer
+     (plan/build agents, plan-guard, Graphify, RTK hook, AGENTS.md contract).
+     Other hosts get the kit's AGENTS.md template if the repo has none.
+  2. Adds the harness's MCP server and its gate / review-on-stop hooks to each
+     host's project config (see kit/hosts.py for the files per host).
+  3. Keeps AGENTS.md loaded in Claude Code and Gemini, and Graphify's output
+     out of the code graph.
 
 Standard library only. Nothing here is required by the harness itself.
 """
@@ -20,7 +23,6 @@ Standard library only. Nothing here is required by the harness itself.
 from __future__ import annotations
 
 import argparse
-import copy
 import importlib.util
 import json
 import os
@@ -31,6 +33,10 @@ import sys
 from typing import Dict, List, Optional
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+if os.path.dirname(HERE) not in sys.path:  # run as a script: make `kit` importable
+    sys.path.insert(0, os.path.dirname(HERE))
+
+from kit import hosts  # noqa: E402
 KIT_DIR = os.path.join(HERE, "coding-agent-setup")
 
 # Tools the harness or the kit can use. All optional.
@@ -57,11 +63,10 @@ TOOLS: List[Dict[str, str]] = [
      "install": "https://docs.astral.sh/uv/getting-started/installation/"},
 ]
 
-# MCP servers setup can add to a target's .mcp.json.
-# By default only ONE code-intelligence server is added: the first of PRIMARY
-# that is installed. Every extra server adds tools (and "use me first"
-# instructions) the agent must choose between, and a larger tool menu makes
-# selection worse. The rest are opt-in with --servers.
+# Extra MCP servers, opt-in with --servers. By default each host gets only the
+# harness's own server (6 tools at most), which already uses codebase-memory-mcp
+# inside trace_calls and change_impact. Every extra server adds tools and its own
+# "use me first" instructions the agent must choose between.
 SERVERS: Dict[str, Dict] = {
     "code-graph": {
         "requires": "codebase-memory-mcp",
@@ -106,46 +111,12 @@ def is_available(requirement: Optional[str]) -> bool:
     return shutil.which(requirement) is not None
 
 
-PRIMARY = ["code-graph", "graphify"]
-
-
 def choose_servers(requested: Optional[List[str]]) -> List[str]:
-    """One primary code-graph server if installed, plus any explicitly requested."""
+    """The extra servers asked for with --servers (none by default)."""
     unknown = [s for s in (requested or []) if s not in SERVERS]
     if unknown:
         raise SystemExit(f"unknown server(s): {', '.join(unknown)}. Choose from: {', '.join(SERVERS)}")
-    chosen = [name for name in PRIMARY if is_available(SERVERS[name]["requires"])][:1]
-    for name in requested or []:
-        if name not in chosen:
-            chosen.append(name)
-    return chosen
-
-
-def merge_mcp(existing: Dict, names: List[str]) -> (Dict, List[str], List[str]):
-    """Returns (merged config, added names, kept names). Never changes an existing entry."""
-    merged = copy.deepcopy(existing) if existing else {}
-    servers = merged.setdefault("mcpServers", {})
-    added, kept = [], []
-    for name in names:
-        if name in servers:
-            kept.append(name)
-        else:
-            servers[name] = copy.deepcopy(SERVERS[name]["entry"])
-            added.append(name)
-    return merged, added, kept
-
-
-def read_json(path: str) -> Dict:
-    if not os.path.isfile(path):
-        return {}
-    with open(path, "r", encoding="utf-8") as f:
-        try:
-            data = json.load(f)
-        except json.JSONDecodeError as e:
-            raise SystemExit(f"{path} is not valid JSON ({e}); fix it before running setup.")
-    if not isinstance(data, dict):
-        raise SystemExit(f"{path} must contain a JSON object.")
-    return data
+    return list(dict.fromkeys(requested or []))
 
 
 def ensure_lines(path: str, lines: List[str], dry_run: bool) -> List[str]:
@@ -241,38 +212,67 @@ def doctor() -> None:
             print(f"  {'':<{width}}           install: {tool['install']}")
     off = os.environ.get("HARNESS_NO_EXTERNAL")
     print("\nHarness mode: " + ("stdlib only (HARNESS_NO_EXTERNAL is set)" if off else "uses rtk and codebase-memory-mcp when present"))
+    _, _, portable = hosts.harness_commands()
+    print("Harness commands on PATH: " + ("yes (configs written by setup work on any machine with the harness installed)"
+                                          if portable else "no (setup will write absolute paths; install with pipx or uv first)"))
+    found = hosts.detect_hosts(os.getcwd())
+    print("Agents found on this machine or in this directory: " + (", ".join(found) or "none"))
 
 
-def install(target: str, requested: Optional[List[str]], skip_kit: bool, dry_run: bool) -> int:
+def resolve_hosts(target: str, value: str) -> List[str]:
+    if value == "all":
+        return list(hosts.HOSTS)
+    if value:
+        chosen = [h.strip() for h in value.split(",") if h.strip()]
+        unknown = [h for h in chosen if h not in hosts.HOSTS]
+        if unknown:
+            raise SystemExit(f"unknown host(s): {', '.join(unknown)}. Choose from: {', '.join(hosts.HOSTS)}, or all")
+        return chosen
+    found = hosts.detect_hosts(target)
+    return found or ["claude"]
+
+
+def seed_agents_md(target: str, dry_run: bool) -> None:
+    """Hosts other than Claude Code get the kit's AGENTS.md template when the repo has none."""
+    path = os.path.join(target, "AGENTS.md")
+    if os.path.exists(path):
+        return
+    template = os.path.join(KIT_DIR, "templates", "shared", "AGENTS.md")
+    if not dry_run:
+        shutil.copyfile(template, path)
+    print(f"   {'would write' if dry_run else 'wrote'} AGENTS.md from the kit template: fill in the <...> placeholders")
+
+
+def install(target: str, requested: Optional[List[str]], skip_kit: bool, dry_run: bool,
+            host_value: str = "") -> int:
     target = os.path.realpath(target)
     if not os.path.isdir(target):
         raise SystemExit(f"target is not a directory: {target}")
+    chosen = resolve_hosts(target, host_value)
+    print(f"Agents: {', '.join(chosen)}" + ("" if host_value else " (detected; pass --hosts to choose)"))
 
     claude_existed = {f: os.path.isfile(os.path.join(target, f)) for f in CLAUDE_FILES}
-    status = 0 if skip_kit else run_kit_installer(target, dry_run)
+    status = 0
+    if "claude" in chosen and not skip_kit:
+        status = run_kit_installer(target, dry_run)
 
     print("\n== Agent instructions")
-    keep_agents_md_loaded(target, claude_existed, dry_run)
+    if any(h != "claude" for h in chosen) or skip_kit:
+        seed_agents_md(target, dry_run)
+    if "claude" in chosen:
+        keep_agents_md_loaded(target, claude_existed, dry_run)
     exclude_generated_from_graph(target, dry_run)
 
-    mcp_path = os.path.join(target, ".mcp.json")
-    names = choose_servers(requested)
-    merged, added, kept = merge_mcp(read_json(mcp_path), names)
-    print(f"\n== MCP servers in {mcp_path}")
-    for name in added:
+    extra = {name: SERVERS[name]["entry"] for name in choose_servers(requested)}
+    print("\n== Agent configs")
+    for line in hosts.configure(target, chosen, extra, dry_run):
+        print(line)
+    for name in extra:
         note = SERVERS[name].get("note")
-        print(f"   {'would add' if dry_run else 'added'}: {name}" + (f"  ({note})" if note else ""))
-    for name in kept:
-        print(f"   kept existing: {name}")
-    skipped = [n for n, s in SERVERS.items() if n not in names]
-    if skipped:
-        print("   not added: " + ", ".join(skipped)
-              + ". One code graph is added by default; add others with --servers name,...")
-    if added and not dry_run:
-        with open(mcp_path, "w", encoding="utf-8") as f:
-            json.dump(merged, f, indent=2)
-            f.write("\n")
-        print("   Claude Code asks you to approve project servers the first time it sees them.")
+        if note:
+            print(f"   {name}: {note}")
+    others = [n for n in SERVERS if n not in extra]
+    print("   extra MCP servers available with --servers: " + ", ".join(others))
     return status
 
 
@@ -282,6 +282,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     sub.add_parser("doctor", help="show which optional tools are installed")
     inst = sub.add_parser("install", help="set up a target repo")
     inst.add_argument("target")
+    inst.add_argument("--hosts", default="", help=f"agents to set up: {', '.join(hosts.HOSTS)}, or all "
+                                                   "(default: those found on this machine or in the repo)")
     inst.add_argument("--servers", default="", help=f"extra MCP servers: {', '.join(SERVERS)}")
     inst.add_argument("--no-kit", action="store_true", help="skip the coding-agent-setup installer")
     inst.add_argument("--dry-run", action="store_true", help="show what would change, change nothing")
@@ -291,7 +293,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         doctor()
         return 0
     requested = [s.strip() for s in args.servers.split(",") if s.strip()]
-    return install(args.target, requested, args.no_kit, args.dry_run)
+    return install(args.target, requested, args.no_kit, args.dry_run, args.hosts)
 
 
 if __name__ == "__main__":

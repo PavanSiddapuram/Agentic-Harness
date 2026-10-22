@@ -15,6 +15,11 @@ PY = f'"{sys.executable}"'
 
 
 def sleeper(seconds, mb=0):
+    # Timing tests use the system `sleep` when there is one: a Python child spends
+    # most of a short run starting the interpreter, and that start-up time jumps
+    # by 20+ ms when the machine is busy, which reads as a "regression".
+    if not mb and shutil.which("sleep"):
+        return f"sleep {seconds}"
     alloc = f"x=bytearray({mb}*1024*1024); x[::4096]=b'1'*len(x[::4096]); " if mb else ""
     return f'{PY} -c "import time; {alloc}time.sleep({seconds})"'
 
@@ -32,7 +37,7 @@ class TestPerfCheck(unittest.TestCase):
         return self.tool.execute({"command": command, "mode": mode, "runs": runs})
 
     def test_same_code_is_not_a_regression(self):
-        cmd = sleeper(0.05)
+        cmd = sleeper(0.2)
         self.assertTrue(self.run_tool(cmd, "baseline").success)
         result = self.run_tool(cmd, "compare")
         self.assertTrue(result.success, result.output)

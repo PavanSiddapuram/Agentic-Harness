@@ -10,10 +10,17 @@ import fnmatch
 import json
 import os
 import re
-import subprocess
-from typing import Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
-from core.models import PermissionLevel, ToolCallRequest
+if TYPE_CHECKING:  # imported lazily at runtime: see _levels()
+    from core.models import PermissionLevel, ToolCallRequest
+
+
+def _levels():
+    """core.models pulls in dataclasses (~20 ms). Hooks that only call check_command
+    or check_write run before every host tool call and skip that cost."""
+    from core.models import PermissionLevel
+    return PermissionLevel
 
 
 # Tools that only read the workspace; they run without a prompt.
@@ -93,6 +100,7 @@ def load_project_gates(workspace_root: str) -> Dict[str, Any]:
 def _current_branch(workspace_root: str) -> Optional[str]:
     # symbolic-ref works on a branch with no commits yet, where
     # `rev-parse --abbrev-ref HEAD` fails and would let the first commit through.
+    import subprocess  # only for git commit/push checks; kept off the per-call hook path
     try:
         proc = subprocess.run(
             ["git", "symbolic-ref", "--short", "-q", "HEAD"], cwd=workspace_root,
@@ -138,17 +146,15 @@ class PermissionGate:
             r"Remove-Item.*-Recurse.*-Force",
         ]
 
-    def assess(self, call: ToolCallRequest) -> PermissionLevel:
+    def assess(self, call: "ToolCallRequest") -> "PermissionLevel":
         """Determines the risk classification tier for a proposed tool call."""
+        PermissionLevel = _levels()
         if call.tool_name in READ_ONLY_TOOLS:
             return PermissionLevel.AUTO_ALLOW
 
         if call.tool_name in ["patch_file", "create_file"]:
-            self._check_protected_path(call.parameters.get("filepath", ""))
             body = call.parameters.get("content") or call.parameters.get("replace_block") or ""
-            for gate in self.project_gates["commandGates"]:
-                if gate["scanContent"] and body and gate["re"].search(body):
-                    raise SecurityException(self._gate_message(gate, "in the content being written"))
+            self.check_write(call.parameters.get("filepath", ""), body)
             return PermissionLevel.CONFIRMATION
 
         if call.tool_name in ("execute_command", "perf_check"):
@@ -158,6 +164,15 @@ class PermissionGate:
 
         # Default unknown tools to RESTRICTED
         return PermissionLevel.RESTRICTED
+
+    def check_write(self, filepath: str, content: str = "") -> None:
+        """Raises SecurityException if writing content to filepath hits a path gate or
+        a content gate (scanContent, e.g. a production flag flip)."""
+        self._check_protected_path(filepath)
+        if content:
+            for gate in self.project_gates["commandGates"]:
+                if gate["scanContent"] and gate["re"].search(content):
+                    raise SecurityException(self._gate_message(gate, "in the content being written"))
 
     @staticmethod
     def _gate_message(gate: Dict[str, Any], where: str = "") -> str:
@@ -208,7 +223,8 @@ class PermissionGate:
                     "Edits here are reserved for a human; describe the change instead."
                 )
 
-    def authorize(self, call: ToolCallRequest, level: PermissionLevel) -> bool:
+    def authorize(self, call: "ToolCallRequest", level: "PermissionLevel") -> bool:
+        PermissionLevel = _levels()
         """Determines whether execution is permitted to proceed."""
         if level == PermissionLevel.AUTO_ALLOW:
             return True

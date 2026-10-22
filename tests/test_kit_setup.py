@@ -1,4 +1,4 @@
-"""Tests for kit/setup.py: server selection, safe .mcp.json merging, doctor."""
+"""Tests for kit/setup.py: server selection, safe config merging, AGENTS.md handling, doctor."""
 
 import io
 import json
@@ -9,49 +9,34 @@ import unittest
 from contextlib import redirect_stdout
 from unittest import mock
 
+from kit import hosts
 from kit import setup as kit_setup
 
 
-class TestMergeMcp(unittest.TestCase):
+class TestServerMerge(unittest.TestCase):
     def test_adds_missing_and_never_overwrites(self):
-        existing = {"mcpServers": {"code-graph": {"command": "my-custom-build"}}, "other": 1}
-        merged, added, kept = kit_setup.merge_mcp(existing, ["code-graph", "sentry"])
-        self.assertEqual(merged["mcpServers"]["code-graph"], {"command": "my-custom-build"})
-        self.assertEqual(merged["mcpServers"]["sentry"]["url"], "https://mcp.sentry.dev/mcp")
-        self.assertEqual(merged["other"], 1)
-        self.assertEqual((added, kept), (["sentry"], ["code-graph"]))
-        self.assertNotIn("sentry", existing["mcpServers"])  # input not mutated
+        data = {"mcpServers": {"code-graph": {"command": "my-custom-build"}}, "other": 1}
+        entries = {name: kit_setup.SERVERS[name]["entry"] for name in ("code-graph", "sentry")}
+        notes = hosts.add_servers(data, "mcpServers", entries)
+        self.assertEqual(data["mcpServers"]["code-graph"], {"command": "my-custom-build"})
+        self.assertEqual(data["mcpServers"]["sentry"]["url"], "https://mcp.sentry.dev/mcp")
+        self.assertEqual(data["other"], 1)
+        self.assertEqual(notes, ["MCP server sentry"])
 
     def test_grafana_is_read_only_and_uses_env_placeholders(self):
-        merged, _, _ = kit_setup.merge_mcp({}, ["grafana"])
-        entry = merged["mcpServers"]["grafana"]
+        entry = kit_setup.SERVERS["grafana"]["entry"]
         self.assertIn("--disable-write", entry["args"])
         self.assertEqual(entry["env"]["GRAFANA_URL"], "${GRAFANA_URL}")
 
 
 class TestChooseServers(unittest.TestCase):
-    def test_only_installed_local_servers_by_default(self):
-        with mock.patch.object(kit_setup, "is_available", side_effect=lambda r: r == "codebase-memory-mcp"):
-            self.assertEqual(kit_setup.choose_servers([]), ["code-graph"])
-
-    def test_credentialed_servers_only_when_requested(self):
+    def test_no_extra_servers_by_default(self):
+        # The harness server already uses the code graph; the raw servers are opt-in.
         with mock.patch.object(kit_setup, "is_available", return_value=True):
-            default = kit_setup.choose_servers([])
-            self.assertNotIn("sentry", default)
-            self.assertNotIn("grafana", default)
-            self.assertIn("sentry", kit_setup.choose_servers(["sentry"]))
+            self.assertEqual(kit_setup.choose_servers([]), [])
 
-    def test_one_code_graph_by_default_even_when_all_installed(self):
-        with mock.patch.object(kit_setup, "is_available", return_value=True):
-            self.assertEqual(kit_setup.choose_servers([]), ["code-graph"])
-
-    def test_graphify_is_the_fallback_primary(self):
-        with mock.patch.object(kit_setup, "is_available", side_effect=lambda r: r == "graphify.serve"):
-            self.assertEqual(kit_setup.choose_servers([]), ["graphify"])
-
-    def test_extra_servers_are_opt_in(self):
-        with mock.patch.object(kit_setup, "is_available", return_value=True):
-            self.assertEqual(kit_setup.choose_servers(["serena", "code-graph"]), ["code-graph", "serena"])
+    def test_extra_servers_are_opt_in_and_deduplicated(self):
+        self.assertEqual(kit_setup.choose_servers(["serena", "code-graph", "serena"]), ["serena", "code-graph"])
 
     def test_unknown_server_is_an_error(self):
         with self.assertRaises(SystemExit):
@@ -79,7 +64,7 @@ class TestInstall(unittest.TestCase):
         code, out = self.run_main("install", self.target, "--servers", "sentry", "--dry-run")
         self.assertEqual(code, 0)
         self.assertIn("would run:", out)
-        self.assertIn("would add: sentry", out)
+        self.assertIn("would update .mcp.json: MCP server agentic-harness, MCP server sentry", out)
         self.assertEqual(os.listdir(self.target), [])
 
     def test_writes_requested_servers_without_kit(self):
@@ -87,7 +72,7 @@ class TestInstall(unittest.TestCase):
         with open(self.mcp) as f:
             self.assertIn("sentry", json.load(f)["mcpServers"])
         _, out = self.run_main("install", self.target, "--servers", "sentry", "--no-kit")
-        self.assertIn("kept existing: sentry", out)
+        self.assertIn("kept .mcp.json (already set up)", out)
 
     def test_invalid_existing_config_is_not_touched(self):
         with open(self.mcp, "w") as f:
